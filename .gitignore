@@ -15,6 +15,11 @@ venv/
 .vscode/
 *.swp
 
+# Wideo i duże pliki binarne
+data/*.mp4
+data/*.avi
+data/*.mov
+
 # Project specific
 # Ignorujemy modele YOLO (często ważą dużo) i bazy danych (aby nie nadpisywać ich sobie nawzajem)
 *.pt
