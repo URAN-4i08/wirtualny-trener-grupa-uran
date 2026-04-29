@@ -1,5 +1,10 @@
 import cv2
 import mediapipe as mp
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from logic.coach_engine import check_volleyball_position
 
 # Konfiguracja MediaPipe
 mp_drawing = mp.solutions.drawing_utils
@@ -52,6 +57,20 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                 "lewa_kostka": landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value],
                 "prawa_kostka": landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value],
             }
+
+        # ==============================================================
+            # TESTOWANIE POZYCJI SIATKARSKIEJ
+            # ==============================================================
+            czy_poprawna, komunikat = check_volleyball_position(punkty_ciala)
+
+            # Dobór koloru: Zielony jeśli dobrze, Czerwony jeśli są błędy
+            kolor_tekstu = (0, 255, 0) if czy_poprawna else (0, 0, 255)
+
+            # Rysowanie ramki w tle dla lepszej czytelności tekstu
+            cv2.rectangle(frame, (0, 0), (800, 40), (0, 0, 0), -1)
+            
+            # Wyświetlanie komunikatu z coach_engine na ekranie
+            cv2.putText(frame, komunikat, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, kolor_tekstu, 2, cv2.LINE_AA)
 
 
         # Wyświetlanie okna z nagraniem i narysowanym szkieletem

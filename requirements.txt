@@ -1,5 +1,5 @@
 PyQt6
-mediapipe
+mediapipe==0.10.14
 ultralytics
 vosk
 pyttsx3
