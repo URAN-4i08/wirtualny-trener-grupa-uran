@@ -15,7 +15,7 @@
 
 ## 🛠 Stos technologiczny
 * **Język:** Python 3.11+
-* **Interfejs (GUI):** PyQt6 
+* **Interfejs (GUI):** React + CSS 
 * **Wizja komputerowa:** * **MediaPipe:** Śledzenie szkieletu i analiza kątów stawowych (kolana, łokcie).
   * **YOLO v11:** Błyskawiczna detekcja piłki i inicjacja algorytmów śledzenia.
 * **Audio & Głos:**

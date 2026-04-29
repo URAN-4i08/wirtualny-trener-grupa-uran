@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="pl"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Cyber Trener - Historia Analiz</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&amp;family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container": "#1d2027",
+                        "on-surface-variant": "#c2c6d6",
+                        "surface-variant": "#32353c",
+                        "tertiary-fixed-dim": "#ffb786",
+                        "on-primary-fixed": "#001a42",
+                        "on-primary": "#002e6a",
+                        "outline": "#8c909f",
+                        "inverse-on-surface": "#2e3038",
+                        "on-secondary-container": "#c4abff",
+                        "surface": "#10131a",
+                        "on-primary-fixed-variant": "#004395",
+                        "surface-container-high": "#272a31",
+                        "on-tertiary-container": "#461f00",
+                        "inverse-primary": "#005ac2",
+                        "secondary-fixed-dim": "#d0bcff",
+                        "secondary": "#d0bcff",
+                        "primary": "#adc6ff",
+                        "on-tertiary": "#502400",
+                        "primary-container": "#4d8eff",
+                        "primary-fixed": "#d8e2ff",
+                        "on-error": "#690005",
+                        "on-background": "#e1e2ec",
+                        "error-container": "#93000a",
+                        "inverse-surface": "#e1e2ec",
+                        "on-secondary": "#3c0091",
+                        "outline-variant": "#424754",
+                        "surface-bright": "#363941",
+                        "error": "#ffb4ab",
+                        "on-tertiary-fixed": "#311400",
+                        "tertiary-fixed": "#ffdcc6",
+                        "secondary-container": "#571bc1",
+                        "primary-fixed-dim": "#adc6ff",
+                        "on-primary-container": "#00285d",
+                        "tertiary": "#ffb786",
+                        "on-secondary-fixed-variant": "#5516be",
+                        "surface-tint": "#adc6ff",
+                        "surface-container-highest": "#32353c",
+                        "surface-container-lowest": "#0b0e15",
+                        "background": "#10131a",
+                        "on-surface": "#e1e2ec",
+                        "secondary-fixed": "#e9ddff",
+                        "on-tertiary-fixed-variant": "#723600",
+                        "surface-container-low": "#191b23",
+                        "surface-dim": "#10131a",
+                        "on-error-container": "#ffdad6",
+                        "on-secondary-fixed": "#23005c",
+                        "tertiary-container": "#df7412"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "container-max": "1280px",
+                        "unit": "4px",
+                        "margin": "32px"
+                    },
+                    "fontFamily": {
+                        "h1": ["Space Grotesk"],
+                        "body-lg": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "h3": ["Space Grotesk"],
+                        "h2": ["Space Grotesk"],
+                        "body-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "h1": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "label-sm": ["12px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                        "h3": ["24px", {"lineHeight": "1.3", "fontWeight": "600"}],
+                        "h2": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "body-md": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .glass-card {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .neon-glow:hover {
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md overflow-x-hidden">
+<!-- TopAppBar -->
+<header class="bg-slate-900/80 dark:bg-slate-950/80 backdrop-blur-md text-blue-500 dark:text-blue-400 font-['Space_Grotesk'] font-medium text-slate-100 docked full-width top-0 border-b border-white/10 shadow-[0_4px_20px_rgba(59,130,246,0.15)] flex justify-between items-center w-full px-6 py-3 z-50 fixed">
+<div class="flex items-center gap-4">
+<span class="text-xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-violet-500">Cyber Trener</span>
+</div>
+<div class="flex items-center gap-6">
+<div class="hidden md:flex gap-8 items-center">
+<span class="text-slate-400 hover:bg-white/5 hover:text-blue-400 transition-colors active:scale-95 transition-transform cursor-pointer">Dashboard</span>
+<span class="text-slate-400 hover:bg-white/5 hover:text-blue-400 transition-colors active:scale-95 transition-transform cursor-pointer">Nowa analiza</span>
+<span class="text-blue-500 font-bold active:scale-95 transition-transform cursor-pointer">Historia</span>
+</div>
+<div class="flex items-center gap-4 border-l border-white/10 pl-6">
+<button class="material-symbols-outlined text-slate-400 hover:text-blue-400 transition-colors" data-icon="notifications">notifications</button>
+<button class="material-symbols-outlined text-slate-400 hover:text-blue-400 transition-colors" data-icon="help_outline">help_outline</button>
+<div class="w-8 h-8 rounded-full overflow-hidden border border-blue-500/30">
+<img alt="User Profile" data-alt="close-up portrait of a professional male athlete in a dark studio with subtle blue rim lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC-Kgm_T_3gna1qlG3hoNK80qaf13zYNdlcgW7pUI5lH7q9IftBZLNHd46QWB40tKCp9LWg38_x32dobaMjL6r95KJkjJzi-Wl6F9nw9vBxOLJMgnvY1mK479bF0XqFqEk1KMjZTp0huM9AmlrOFOzyN4lLt1SR7N-unPtLjnAaY4oDBexyAgVnWkfNQfSy4W1Q1UiytPIfB-NBYe4HFY7uA3gRad6ZeepbYoC7eP42lVd-XuCEbjNv9c0GEu52oiXoGIFk5ZFSlpc"/>
+</div>
+</div>
+</div>
+</header>
+<!-- SideNavBar -->
+<aside class="bg-slate-900/90 dark:bg-slate-950/90 backdrop-blur-xl text-blue-500 dark:text-blue-400 font-['Space_Grotesk'] text-sm tracking-wide h-full w-64 border-r rounded-none border-white/10 shadow-2xl fixed left-0 top-0 h-screen flex flex-col z-40 hidden md:flex">
+<div class="p-6 mb-8 mt-16">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+<span class="material-symbols-outlined text-white" data-icon="bolt" data-weight="fill" style="font-variation-settings: 'FILL' 1;">bolt</span>
+</div>
+<div>
+<p class="text-lg font-bold text-blue-500 leading-none">Cyber Trener</p>
+<p class="text-[10px] text-slate-500 uppercase tracking-widest mt-1">AI Volleyball Coach</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 px-4 space-y-2">
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="dashboard">dashboard</span>
+<span>Dashboard</span>
+</a>
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="videocam">videocam</span>
+<span>Nowa analiza</span>
+</a>
+<a class="bg-blue-500/10 text-blue-400 border-r-2 border-blue-500 flex items-center px-4 py-3 font-bold active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="history">history</span>
+<span>Historia</span>
+</a>
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="leaderboard">leaderboard</span>
+<span>Raporty</span>
+</a>
+</nav>
+<div class="p-4 mt-auto border-t border-white/10">
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150 rounded-lg" href="#">
+<span class="material-symbols-outlined mr-3" data-icon="settings">settings</span>
+<span>Ustawienia</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="md:ml-64 pt-24 px-6 pb-12 min-h-screen">
+<div class="max-w-container-max mx-auto">
+<!-- Header Section -->
+<div class="flex flex-col md:flex-row md:items-end justify-between mb-8 gap-4">
+<div>
+<h1 class="font-h1 text-h1 text-on-surface mb-2">Historia analiz</h1>
+<p class="text-on-surface-variant font-body-md">Przeglądaj i zarządzaj swoimi nagraniami treningowymi przetworzonymi przez AI.</p>
+</div>
+<div class="flex gap-3">
+<button class="bg-surface-variant text-on-surface border border-outline-variant px-5 py-2.5 rounded-xl font-body-md flex items-center gap-2 hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[20px]" data-icon="file_download">file_download</span>
+                        Eksportuj CSV
+                    </button>
+<button class="bg-gradient-to-r from-blue-500 to-violet-600 text-white px-6 py-2.5 rounded-xl font-h3 text-body-md flex items-center gap-2 shadow-lg shadow-blue-500/20 hover:scale-[1.02] transition-transform active:scale-95">
+<span class="material-symbols-outlined" data-icon="add" data-weight="fill" style="font-variation-settings: 'FILL' 1;">add</span>
+                        Nowa analiza
+                    </button>
+</div>
+</div>
+<!-- Filter & Search Bar -->
+<div class="glass-card rounded-2xl p-4 mb-6 flex flex-col md:flex-row gap-4 items-center">
+<div class="relative w-full md:w-96 group">
+<span class="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-blue-400 transition-colors" data-icon="search">search</span>
+<input class="w-full bg-surface-container-lowest border-outline-variant focus:border-blue-500 rounded-xl py-2.5 pl-11 pr-4 text-on-surface placeholder:text-outline transition-all focus:ring-2 focus:ring-blue-500/20 outline-none" placeholder="Szukaj po nazwie pliku..." type="text"/>
+</div>
+<div class="flex gap-3 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
+<div class="relative shrink-0">
+<select class="appearance-none bg-surface-container-low border-outline-variant rounded-xl py-2.5 pl-4 pr-10 text-on-surface text-sm focus:border-blue-500 outline-none cursor-pointer">
+<option>Wszystkie statusy</option>
+<option>Zakończono</option>
+<option>W trakcie</option>
+<option>Błąd</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none" data-icon="expand_more">expand_more</span>
+</div>
+<div class="relative shrink-0">
+<select class="appearance-none bg-surface-container-low border-outline-variant rounded-xl py-2.5 pl-4 pr-10 text-on-surface text-sm focus:border-blue-500 outline-none cursor-pointer">
+<option>Ostatnie 30 dni</option>
+<option>Ostatnie 7 dni</option>
+<option>Dzisiaj</option>
+<option>Wszystkie</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none" data-icon="calendar_month">calendar_month</span>
+</div>
+<button class="bg-surface-container-high text-on-surface-variant p-2.5 rounded-xl border border-outline-variant hover:text-on-surface transition-colors shrink-0">
+<span class="material-symbols-outlined" data-icon="tune">tune</span>
+</button>
+</div>
+</div>
+<!-- Table Container -->
+<div class="glass-card rounded-2xl overflow-hidden shadow-2xl">
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-white/5 border-b border-white/10">
+<th class="px-6 py-4 font-h3 text-label-sm text-outline uppercase tracking-wider">Data analizy</th>
+<th class="px-6 py-4 font-h3 text-label-sm text-outline uppercase tracking-wider">Nazwa pliku</th>
+<th class="px-6 py-4 font-h3 text-label-sm text-outline uppercase tracking-wider">Wynik %</th>
+<th class="px-6 py-4 font-h3 text-label-sm text-outline uppercase tracking-wider">Status</th>
+<th class="px-6 py-4 font-h3 text-label-sm text-outline uppercase tracking-wider text-right">Akcje</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-white/5">
+<!-- Row 1 -->
+<tr class="hover:bg-white/5 transition-colors group">
+<td class="px-6 py-5">
+<div class="flex flex-col">
+<span class="text-on-surface font-semibold">12 Paź 2023</span>
+<span class="text-outline text-xs">14:20</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/10">
+<span class="material-symbols-outlined text-blue-400" data-icon="movie">movie</span>
+</div>
+<span class="text-on-surface font-medium">trening_ataku_seria_1.mp4</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<div class="w-12 h-1.5 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary" style="width: 85%"></div>
+</div>
+<span class="font-h3 text-body-md text-primary">85%</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                                        Zakończono
+                                    </span>
+</td>
+<td class="px-6 py-5 text-right">
+<button class="text-primary-container font-h3 text-body-md hover:text-primary transition-colors inline-flex items-center gap-1 neon-glow px-4 py-2 rounded-lg bg-primary-container/10 border border-primary-container/20">
+                                        Zobacz raport
+                                        <span class="material-symbols-outlined text-[18px]" data-icon="chevron_right">chevron_right</span>
+</button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-white/5 transition-colors group">
+<td class="px-6 py-5">
+<div class="flex flex-col">
+<span class="text-on-surface font-semibold">11 Paź 2023</span>
+<span class="text-outline text-xs">09:15</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/10">
+<span class="material-symbols-outlined text-blue-400" data-icon="movie">movie</span>
+</div>
+<span class="text-on-surface font-medium">analiza_serwu_mecz_v2.mp4</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<div class="w-12 h-1.5 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-tertiary" style="width: 42%"></div>
+</div>
+<span class="font-h3 text-body-md text-tertiary">42%</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-tertiary/10 text-tertiary text-[11px] font-bold uppercase tracking-wider">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+                                        W trakcie
+                                    </span>
+</td>
+<td class="px-6 py-5 text-right">
+<button class="text-outline cursor-not-allowed font-h3 text-body-md inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-white/5 border border-white/10 opacity-50" disabled="">
+                                        Przetwarzanie...
+                                    </button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-white/5 transition-colors group">
+<td class="px-6 py-5">
+<div class="flex flex-col">
+<span class="text-on-surface font-semibold">10 Paź 2023</span>
+<span class="text-outline text-xs">18:45</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/10">
+<span class="material-symbols-outlined text-blue-400" data-icon="movie">movie</span>
+</div>
+<span class="text-on-surface font-medium">test_nagranie_hala.mov</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<span class="font-h3 text-body-md text-outline">--</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-error/10 text-error text-[11px] font-bold uppercase tracking-wider">
+<span class="w-1.5 h-1.5 rounded-full bg-error"></span>
+                                        Błąd
+                                    </span>
+</td>
+<td class="px-6 py-5 text-right">
+<button class="text-error font-h3 text-body-md hover:underline inline-flex items-center gap-1 px-4 py-2">
+<span class="material-symbols-outlined text-[18px]" data-icon="refresh">refresh</span>
+                                        Ponów
+                                    </button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-white/5 transition-colors group">
+<td class="px-6 py-5">
+<div class="flex flex-col">
+<span class="text-on-surface font-semibold">08 Paź 2023</span>
+<span class="text-outline text-xs">11:00</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center border border-white/10">
+<span class="material-symbols-outlined text-blue-400" data-icon="movie">movie</span>
+</div>
+<span class="text-on-surface font-medium">technika_bloku_slowmo.mp4</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<div class="flex items-center gap-2">
+<div class="w-12 h-1.5 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary" style="width: 92%"></div>
+</div>
+<span class="font-h3 text-body-md text-primary">92%</span>
+</div>
+</td>
+<td class="px-6 py-5">
+<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                                        Zakończono
+                                    </span>
+</td>
+<td class="px-6 py-5 text-right">
+<button class="text-primary-container font-h3 text-body-md hover:text-primary transition-colors inline-flex items-center gap-1 neon-glow px-4 py-2 rounded-lg bg-primary-container/10 border border-primary-container/20">
+                                        Zobacz raport
+                                        <span class="material-symbols-outlined text-[18px]" data-icon="chevron_right">chevron_right</span>
+</button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination -->
+<div class="px-6 py-4 border-t border-white/10 flex items-center justify-between bg-white/[0.02]">
+<span class="text-label-sm text-outline">Pokazano 1-4 z 24 analiz</span>
+<div class="flex gap-2">
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-outline hover:bg-white/5 disabled:opacity-30" disabled="">
+<span class="material-symbols-outlined text-[18px]" data-icon="chevron_left">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg bg-primary text-on-primary font-bold text-xs">1</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-outline hover:bg-white/5 text-xs">2</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-outline hover:bg-white/5 text-xs">3</button>
+<button class="w-8 h-8 flex items-center justify-center rounded-lg border border-white/10 text-outline hover:bg-white/5">
+<span class="material-symbols-outlined text-[18px]" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+<!-- Dashboard Stats Summary (Bento Style) -->
+<div class="mt-12 grid grid-cols-1 md:grid-cols-4 gap-4">
+<div class="glass-card p-6 rounded-2xl">
+<div class="flex items-center justify-between mb-4">
+<span class="text-outline font-label-sm uppercase">Suma analiz</span>
+<span class="material-symbols-outlined text-blue-400" data-icon="analytics">analytics</span>
+</div>
+<p class="text-h2 font-h2 text-on-surface">128</p>
+<p class="text-xs text-primary mt-2 flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]" data-icon="trending_up">trending_up</span>
+                        +12% w tym miesiącu
+                    </p>
+</div>
+<div class="glass-card p-6 rounded-2xl">
+<div class="flex items-center justify-between mb-4">
+<span class="text-outline font-label-sm uppercase">Średni wynik</span>
+<span class="material-symbols-outlined text-violet-400" data-icon="star">star</span>
+</div>
+<p class="text-h2 font-h2 text-on-surface">76%</p>
+<p class="text-xs text-outline mt-2">Ostatnie 30 dni</p>
+</div>
+<div class="glass-card p-6 rounded-2xl">
+<div class="flex items-center justify-between mb-4">
+<span class="text-outline font-label-sm uppercase">Czas wideo</span>
+<span class="material-symbols-outlined text-tertiary" data-icon="schedule">schedule</span>
+</div>
+<p class="text-h2 font-h2 text-on-surface">14h 22m</p>
+<p class="text-xs text-outline mt-2">Przetworzony materiał</p>
+</div>
+<div class="glass-card p-6 rounded-2xl border-primary/20 bg-primary/5">
+<div class="flex items-center justify-between mb-4">
+<span class="text-primary font-label-sm uppercase">Status AI</span>
+<div class="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(173,198,255,1)]"></div>
+</div>
+<p class="text-h2 font-h2 text-on-surface">Online</p>
+<p class="text-xs text-primary mt-2">System gotowy do analizy</p>
+</div>
+</div>
+</div>
+</main>
+<!-- FAB for mobile - only on top-level screens -->
+<button class="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-r from-blue-500 to-violet-600 text-white rounded-full shadow-2xl flex items-center justify-center z-50 active:scale-95 transition-transform">
+<span class="material-symbols-outlined text-[28px]" data-icon="add" data-weight="fill" style="font-variation-settings: 'FILL' 1;">add</span>
+</button>
+</body></html>
