@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="pl"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700;900&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "surface-container": "#1d2027",
+                    "on-surface-variant": "#c2c6d6",
+                    "surface-variant": "#32353c",
+                    "tertiary-fixed-dim": "#ffb786",
+                    "on-primary-fixed": "#001a42",
+                    "on-primary": "#002e6a",
+                    "outline": "#8c909f",
+                    "inverse-on-surface": "#2e3038",
+                    "on-secondary-container": "#c4abff",
+                    "surface": "#10131a",
+                    "on-primary-fixed-variant": "#004395",
+                    "surface-container-high": "#272a31",
+                    "on-tertiary-container": "#461f00",
+                    "inverse-primary": "#005ac2",
+                    "secondary-fixed-dim": "#d0bcff",
+                    "secondary": "#d0bcff",
+                    "primary": "#adc6ff",
+                    "on-tertiary": "#502400",
+                    "primary-container": "#4d8eff",
+                    "primary-fixed": "#d8e2ff",
+                    "on-error": "#690005",
+                    "on-background": "#e1e2ec",
+                    "error-container": "#93000a",
+                    "inverse-surface": "#e1e2ec",
+                    "on-secondary": "#3c0091",
+                    "outline-variant": "#424754",
+                    "surface-bright": "#363941",
+                    "error": "#ffb4ab",
+                    "on-tertiary-fixed": "#311400",
+                    "tertiary-fixed": "#ffdcc6",
+                    "secondary-container": "#571bc1",
+                    "primary-fixed-dim": "#adc6ff",
+                    "on-primary-container": "#00285d",
+                    "tertiary": "#ffb786",
+                    "on-secondary-fixed-variant": "#5516be",
+                    "surface-tint": "#adc6ff",
+                    "surface-container-highest": "#32353c",
+                    "surface-container-lowest": "#0b0e15",
+                    "background": "#10131a",
+                    "on-surface": "#e1e2ec",
+                    "secondary-fixed": "#e9ddff",
+                    "on-tertiary-fixed-variant": "#723600",
+                    "surface-container-low": "#191b23",
+                    "surface-dim": "#10131a",
+                    "on-error-container": "#ffdad6",
+                    "on-secondary-fixed": "#23005c",
+                    "tertiary-container": "#df7412"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "gutter": "24px",
+                    "container-max": "1280px",
+                    "unit": "4px",
+                    "margin": "32px"
+            },
+            "fontFamily": {
+                    "h1": ["Space Grotesk"],
+                    "body-lg": ["Inter"],
+                    "label-sm": ["Inter"],
+                    "h3": ["Space Grotesk"],
+                    "h2": ["Space Grotesk"],
+                    "body-md": ["Inter"]
+            },
+            "fontSize": {
+                    "h1": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "body-lg": ["18px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                    "label-sm": ["12px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "h3": ["24px", {"lineHeight": "1.3", "fontWeight": "600"}],
+                    "h2": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                    "body-md": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .glass-card {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .neon-glow {
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);
+        }
+        .ai-pulse {
+            animation: pulse-ring 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse-ring {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md selection:bg-primary/30 min-h-screen">
+<aside class="fixed left-0 top-0 h-screen flex flex-col z-40 bg-slate-900/90 dark:bg-slate-950/90 backdrop-blur-xl h-full w-64 border-r rounded-none border-white/10 shadow-2xl font-['Space_Grotesk'] text-sm tracking-wide">
+<div class="px-6 py-8 flex flex-col items-center gap-2">
+<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-violet-500 flex items-center justify-center neon-glow">
+<span class="material-symbols-outlined text-white text-2xl" data-weight="fill">sports_volleyball</span>
+</div>
+<div class="text-center mt-3">
+<p class="text-lg font-bold text-blue-500">Cyber Trener</p>
+<p class="text-[10px] text-slate-400 uppercase tracking-widest">AI Volleyball Coach</p>
+</div>
+</div>
+<nav class="flex-1 px-4 py-6 space-y-2">
+<a class="bg-blue-500/10 text-blue-400 border-r-2 border-blue-500 flex items-center px-4 py-3 font-bold active:translate-x-1 duration-150 transition-all duration-300" href="#">
+<span class="material-symbols-outlined mr-3">dashboard</span>
+                Dashboard
+            </a>
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3">videocam</span>
+                Nowa analiza
+            </a>
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3">history</span>
+                Historia
+            </a>
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3">leaderboard</span>
+                Raporty
+            </a>
+<a class="flex items-center px-4 py-3 text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 transition-all duration-300 active:translate-x-1 duration-150" href="#">
+<span class="material-symbols-outlined mr-3">settings</span>
+                Ustawienia
+            </a>
+</nav>
+<div class="p-6 border-t border-white/10">
+<div class="flex items-center gap-3">
+<img class="w-10 h-10 rounded-full border border-primary/30" data-alt="professional portrait of a male volleyball coach in athletic wear with focused expression" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAO8H94zin3EW5uQv6yHgGPS_CKZvdYdcv9CNlg9HEJ9EO4JjGCr4oYATIS28IHM3-aV7E3djZPjZsJVNuHDRZoefcoj-91rw6hjc0Qg3UoeNmO7BPv2bfif1KII0uT5v06bHGiNp160qTE4SlqDP8yXhGTieVvV0vNfCqWrKfmAzUHjfiDounY4Y32jtcUDmnq7iLE-G7KPvsKapZkD_Vm4GB--exTCtzeEeJFY8lZZ0QDY_ZOfEX4f2_4TsJ5qkdb_Vk2_RKgWyQ"/>
+<div class="overflow-hidden">
+<p class="text-xs font-bold truncate">Coach Adam</p>
+<p class="text-[10px] text-slate-500">Premium Account</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="ml-64 min-h-screen relative">
+<header class="sticky top-0 z-50 flex justify-between items-center w-full px-8 py-4 bg-slate-900/80 dark:bg-slate-950/80 backdrop-blur-md border-b border-white/10 shadow-[0_4px_20px_rgba(59,130,246,0.15)]">
+<div class="flex flex-col">
+<h1 class="text-xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-violet-500 font-h1">
+                    Cyber Trener
+                </h1>
+<p class="text-[11px] text-slate-400 font-label-sm uppercase tracking-[0.2em]">AI Volleyball Coach – analiza odbicia dolnego</p>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 text-slate-400 hover:bg-white/5 hover:text-blue-400 transition-colors active:scale-95">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-slate-400 hover:bg-white/5 hover:text-blue-400 transition-colors active:scale-95">
+<span class="material-symbols-outlined">help_outline</span>
+</button>
+<div class="h-8 w-[1px] bg-white/10 mx-2"></div>
+<div class="flex gap-3">
+<button class="px-5 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-violet-600 text-white text-sm font-bold neon-glow active:scale-95 transition-all">
+                        Prześlij nagranie
+                    </button>
+<button class="px-5 py-2 rounded-lg border border-blue-500/30 text-blue-400 text-sm font-bold hover:bg-blue-500/10 active:scale-95 transition-all">
+                        Rozpocznij analizę
+                    </button>
+</div>
+</div>
+</header>
+<div class="p-8 max-w-7xl mx-auto space-y-8">
+<div class="grid grid-cols-12 gap-6">
+<div class="col-span-12 lg:col-span-8 glass-card rounded-xl p-6 relative overflow-hidden flex flex-col gap-6">
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-3">
+<div class="w-3 h-3 bg-red-500 rounded-full ai-pulse"></div>
+<h2 class="text-h3 font-h3 text-slate-100">Podgląd techniki na żywo</h2>
+</div>
+<span class="text-label-sm bg-surface-variant text-primary px-3 py-1 rounded-full uppercase">Analiza w toku: Klatka 142/300</span>
+</div>
+<div class="aspect-video bg-black/40 rounded-lg relative flex items-center justify-center group">
+<img class="w-full h-full object-cover opacity-60 rounded-lg" data-alt="volleyball player performing a perfect underhand bump pass in a modern indoor stadium with neon overhead lights" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDy3h0L_r1G_q0vloKyzP66PiBffjMUMDZOY6Ru7QNNXWivwyG8CSssbuMm_d69Pe-RtUuH9oLFARimHgCcL9czMbD7XyjCYpNvLBWwdb0nxqWg78KzOkF3FPrCFGTc0Baj6vDr4HqNyBqhsRKYy5xyhvnU-fEPM3oexUxPo5uB3nkrDzK7njE0-uLseOb_yXAJuLJn-17fkTH90et1YcPfLpRwxibjOhON6LQAxpiQlZWGP1lxy-ob6FweK2GWko2vvD4soDECN5w"/>
+<div class="absolute inset-0 border-[1px] border-blue-500/20 pointer-events-none"></div>
+<div class="absolute top-1/4 left-1/3 w-32 h-32 border-2 border-primary/50 rounded-full flex items-center justify-center">
+<div class="w-1 h-1 bg-primary rounded-full"></div>
+</div>
+<div class="absolute bottom-1/4 left-1/4 h-24 w-1 bg-primary/40 shadow-[0_0_10px_rgba(173,198,255,0.5)]"></div>
+<div class="absolute bottom-1/4 left-1/2 h-24 w-1 bg-primary/40 shadow-[0_0_10px_rgba(173,198,255,0.5)]"></div>
+<div class="absolute bottom-6 left-6 p-4 glass-card border-l-4 border-primary rounded-lg max-w-xs">
+<p class="text-primary text-[10px] font-bold uppercase mb-1">Wykryta anomalia</p>
+<p class="text-xs text-on-surface-variant leading-relaxed">Zbyt małe ugięcie w stawie kolanowym podczas fazy amortyzacji. Skoryguj o ok. 15 stopni.</p>
+</div>
+</div>
+</div>
+<div class="col-span-12 lg:col-span-4 flex flex-col gap-6">
+<div class="glass-card rounded-xl p-8 flex flex-col items-center justify-center text-center relative overflow-hidden">
+<div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-violet-500"></div>
+<p class="text-label-sm text-slate-400 uppercase tracking-widest mb-2">Ocena techniki</p>
+<div class="relative w-40 h-40 flex items-center justify-center">
+<svg class="w-full h-full transform -rotate-90">
+<circle class="text-slate-800" cx="80" cy="80" fill="transparent" r="70" stroke="currentColor" stroke-width="8"></circle>
+<circle class="text-primary" cx="80" cy="80" fill="transparent" r="70" stroke="currentColor" stroke-dasharray="440" stroke-dashoffset="96" stroke-width="8"></circle>
+</svg>
+<span class="absolute text-5xl font-black font-h1 text-slate-100">78%</span>
+</div>
+<p class="mt-4 text-sm text-on-surface-variant">Twój wynik jest o <span class="text-primary font-bold">5% lepszy</span> niż wczoraj.</p>
+</div>
+<div class="glass-card rounded-xl p-6 flex flex-col gap-4">
+<h3 class="text-label-sm text-slate-400 uppercase tracking-widest">Kluczowe metryki</h3>
+<div class="space-y-4">
+<div class="flex justify-between items-center">
+<span class="text-sm text-on-surface-variant">Stabilność postawy</span>
+<div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[85%]"></div>
+</div>
+</div>
+<div class="flex justify-between items-center">
+<span class="text-sm text-on-surface-variant">Ugięcie kolan</span>
+<div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden">
+<div class="h-full bg-error w-[42%]"></div>
+</div>
+</div>
+<div class="flex justify-between items-center">
+<span class="text-sm text-on-surface-variant">Kąt ramion</span>
+<div class="w-24 h-2 bg-slate-800 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[92%]"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="col-span-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+<div class="glass-card rounded-xl p-6 flex items-start gap-4">
+<div class="p-3 rounded-lg bg-surface-variant text-primary">
+<span class="material-symbols-outlined">warning</span>
+</div>
+<div>
+<p class="text-label-sm text-slate-400 uppercase">Liczba błędów</p>
+<p class="text-h2 font-h2 text-slate-100">3</p>
+<p class="text-[10px] text-error">Wymaga poprawy</p>
+</div>
+</div>
+<div class="glass-card rounded-xl p-6 flex items-start gap-4">
+<div class="p-3 rounded-lg bg-surface-variant text-tertiary">
+<span class="material-symbols-outlined">psychology</span>
+</div>
+<div>
+<p class="text-label-sm text-slate-400 uppercase">Największy problem</p>
+<p class="text-lg font-bold text-slate-100 leading-tight">Ugięcie kolan</p>
+<p class="text-[10px] text-tertiary">Kluczowy priorytet</p>
+</div>
+</div>
+<div class="glass-card rounded-xl p-6 flex items-start gap-4">
+<div class="p-3 rounded-lg bg-surface-variant text-blue-400">
+<span class="material-symbols-outlined">timer</span>
+</div>
+<div>
+<p class="text-label-sm text-slate-400 uppercase">Czas reakcji</p>
+<p class="text-h2 font-h2 text-slate-100">0.24s</p>
+<p class="text-[10px] text-primary">Poziom Pro</p>
+</div>
+</div>
+<div class="glass-card rounded-xl p-6 flex items-start gap-4">
+<div class="p-3 rounded-lg bg-surface-variant text-violet-400">
+<span class="material-symbols-outlined">fitness_center</span>
+</div>
+<div>
+<p class="text-label-sm text-slate-400 uppercase">Obciążenie</p>
+<p class="text-h2 font-h2 text-slate-100">Medium</p>
+<p class="text-[10px] text-violet-400">Sesja optymalna</p>
+</div>
+</div>
+</div>
+<div class="col-span-12 glass-card rounded-xl p-6 flex flex-col gap-6">
+<div class="flex justify-between items-center">
+<h3 class="text-h3 font-h3 text-slate-100">Zalecenia AI Coach</h3>
+<button class="text-sm text-primary font-bold flex items-center gap-2 hover:underline">
+                            Pełny raport <span class="material-symbols-outlined text-sm">arrow_forward</span>
+</button>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+<div class="p-4 rounded-lg bg-surface-container-high border-l-2 border-primary">
+<h4 class="font-bold text-slate-100 mb-2">1. Praca nóg</h4>
+<p class="text-sm text-on-surface-variant leading-relaxed">Skup się na zejściu niżej na nogach przed kontaktem z piłką. Wykonaj 3 serie po 15 przysiadów dynamicznych.</p>
+</div>
+<div class="p-4 rounded-lg bg-surface-container-high border-l-2 border-violet-500">
+<h4 class="font-bold text-slate-100 mb-2">2. Prowadzenie rąk</h4>
+<p class="text-sm text-on-surface-variant leading-relaxed">Twoje ramiona są idealnie zblokowane, zachowaj tę sztywność przy mocniejszych uderzeniach.</p>
+</div>
+<div class="p-4 rounded-lg bg-surface-container-high border-l-2 border-tertiary">
+<h4 class="font-bold text-slate-100 mb-2">3. Kierunkowość</h4>
+<p class="text-sm text-on-surface-variant leading-relaxed">Pracuj nad wypchnięciem barków w stronę celu, aby zwiększyć precyzję dogrania.</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<div class="fixed bottom-8 right-8 z-50">
+<button class="w-14 h-14 rounded-full bg-gradient-to-tr from-blue-500 to-violet-500 text-white flex items-center justify-center shadow-2xl neon-glow active:scale-90 transition-transform">
+<span class="material-symbols-outlined text-3xl" data-weight="fill">chat_bubble</span>
+</button>
+</div>
+</body></html>
