@@ -1,5 +1,5 @@
 # coach_engine.py
-# Ten moduł będzie zarządzał logiką treningową, liczył kąty i oceniał poprawność ćwiczeń
+# Ten moduł zarządza logiką treningową, liczy kąty i ocenia poprawność ćwiczeń
 
 import numpy as np
 
@@ -20,13 +20,12 @@ def calculate_angle(a, b, c):
 def check_volleyball_position(punkty_ciala):
     """
     Sprawdza, czy sylwetka znajduje się w poprawnej pozycji do odbicia dolnego.
-    Zwraca krotkę: (True/False, "Komunikat zwrotny")
+    Zwraca krotkę: (True/False, "Komunikat zwrotny", Punkty)
     """
     if not punkty_ciala:
-        return False, "Nie wykryto sylwetki"
+        return False, "Nie wykryto sylwetki", 0
     
     try:
-        # Pobieranie potrzebnych punktów
         l_biodro = punkty_ciala["lewe_biodro"]
         l_kolano = punkty_ciala["lewe_kolano"]
         l_kostka = punkty_ciala["lewa_kostka"]
@@ -44,37 +43,37 @@ def check_volleyball_position(punkty_ciala):
         p_ramie = punkty_ciala["prawe_ramie"]
         
     except KeyError:
-        return False, "Brak kluczowych punktów szkieletu"
+        return False, "Brak kluczowych punktów szkieletu", 0
 
-    # 1. Obliczanie kątów kolan
     kat_l_kolano = calculate_angle(l_biodro, l_kolano, l_kostka)
     kat_p_kolano = calculate_angle(p_biodro, p_kolano, p_kostka)
     
-    # 2. Obliczanie kątów łokci
     kat_l_lokiec = calculate_angle(l_ramie, l_lokiec, l_nadgarstek)
     kat_p_lokiec = calculate_angle(p_ramie, p_lokiec, p_nadgarstek)
     
-    # 3. Odległość nadgarstków od siebie (w osi X) - używamy znormalizowanych wartości MediaPipe
     dystans_nadgarstkow = abs(l_nadgarstek.x - p_nadgarstek.x)
 
     komunikaty = []
     pozycja_poprawna = True
+    punkty = 100  # Startujemy z maksymalną notą
 
-    # Sprawdzanie warunków z pewną tolerancją błędów
+    # Sprawdzanie warunków i odejmowanie punktów za błędy
     if kat_l_kolano > 165 or kat_p_kolano > 165:
         komunikaty.append("Ugnij kolana!")
         pozycja_poprawna = False
+        punkty -= 30
         
-    if dystans_nadgarstkow > 0.08: # Jeśli dłonie są zbyt daleko od siebie
+    if dystans_nadgarstkow > 0.08: 
         komunikaty.append("Zlacz dlonie!")
         pozycja_poprawna = False
+        punkty -= 30
         
     if kat_l_lokiec < 155 or kat_p_lokiec < 155:
         komunikaty.append("Wyprostuj lokcie!")
         pozycja_poprawna = False
+        punkty -= 40
 
     if pozycja_poprawna:
-        return True, "POZYCJA IDEALNA!"
+        return True, "IDEALNE ODBICIE!", punkty
     else:
-        # Zwracamy połączone komunikaty, jeśli jest więcej błędów
-        return False, " | ".join(komunikaty)
+        return False, " | ".join(komunikaty), punkty
