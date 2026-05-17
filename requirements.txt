@@ -1,7 +1,10 @@
-PyQt6
 mediapipe
 ultralytics
 vosk
 pyttsx3
 opencv-python
 numpy
+
+fastapi
+uvicorn
+websockets
