@@ -1,175 +1,670 @@
-import sys
-import os
-import cv2
 import asyncio
+import os
+import shutil
+import sys
 import threading
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
-from mediapipe.python.solutions import drawing_utils as mp_drawing
-from mediapipe.python.solutions import pose as mp_pose
+import time
 
-# Add the root directory to path to import logic modules
+import cv2
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+import mediapipe as mp
+from ultralytics import YOLO
+
+# Add the root directory to path to import logic modules.
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-from logic.coach_engine import check_volleyball_position, calculate_angle
+from logic.coach_engine import calculate_angle, check_volleyball_position
 
 app = FastAPI()
 
-# Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust in production (e.g., ["http://localhost:5173"])
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global metrics dictionary to share data between the video thread and WebSocket
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "data", "uploads")
+CACHE_DIR = os.path.join(UPLOAD_DIR, "processed")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+state_lock = threading.Lock()
+
+source_state = {
+    "mode": "camera",
+    "cameraIndex": 0,
+    "videoPath": None,
+    "videoName": None,
+    "jobId": 0,
+}
+
+preprocessed_state = {
+    "jobId": 0,
+    "status": "idle",
+    "progress": 0,
+    "framePaths": [],
+    "metrics": [],
+    "fps": 25,
+    "error": None,
+}
+
 global_metrics = {
     "score": 0,
     "kneeAngle": 120,
     "warnings": None,
-    "isAnalyzing": False
+    "postureWarnings": None,
+    "contactWarning": None,
+    "contactScore": None,
+    "isContact": False,
+    "hasPose": False,
+    "hasBall": False,
+    "status": "Oczekiwanie na uruchomienie analizy",
+    "source": "camera",
+    "isAnalyzing": False,
+    "videoProcessingStatus": "idle",
+    "videoProcessingProgress": 0,
 }
 
-# Initialize Models
-yolo_model = YOLO('yolov8s.pt')
+yolo_model = YOLO(os.getenv("YOLO_MODEL_PATH", "yolov8s.pt"))
+mp_drawing = mp.solutions.drawing_utils
+mp_pose = mp.solutions.pose
 pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
-def generate_frames():
-    global global_metrics
-    # Używamy lokalnego nagrania testowego zamiast kamery do celów testowych
-    video_path = os.path.join(os.path.dirname(__file__), 'data', 'nagranie_testowe.mp4')
-    camera = cv2.VideoCapture(video_path)
-    
+LIVE_STREAM_FPS = int(os.getenv("LIVE_STREAM_FPS", "20"))
+LIVE_STREAM_WIDTH = int(os.getenv("LIVE_STREAM_WIDTH", "960"))
+LIVE_ANALYSIS_WIDTH = int(os.getenv("LIVE_ANALYSIS_WIDTH", "640"))
+LIVE_POSE_EVERY_N_FRAMES = int(os.getenv("LIVE_POSE_EVERY_N_FRAMES", "3"))
+LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "6"))
+
+
+def update_metrics(**kwargs):
+    with state_lock:
+        global_metrics.update(kwargs)
+
+
+def snapshot_metrics():
+    with state_lock:
+        return global_metrics.copy()
+
+
+def snapshot_source():
+    with state_lock:
+        return source_state.copy()
+
+
+def snapshot_preprocessed():
+    with state_lock:
+        return {
+            **preprocessed_state,
+            "framePaths": list(preprocessed_state["framePaths"]),
+            "metrics": list(preprocessed_state["metrics"]),
+        }
+
+
+def get_capture_source():
+    current_source = snapshot_source()
+
+    if current_source["mode"] == "file" and current_source["videoPath"]:
+        return current_source["videoPath"], current_source
+
+    return int(current_source["cameraIndex"]), current_source
+
+
+def build_body_points(landmarks):
+    return {
+        "nos": landmarks[mp_pose.PoseLandmark.NOSE.value],
+        "lewe_ramie": landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value],
+        "prawe_ramie": landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value],
+        "lewy_lokiec": landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value],
+        "prawy_lokiec": landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW.value],
+        "lewy_nadgarstek": landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value],
+        "prawy_nadgarstek": landmarks[mp_pose.PoseLandmark.RIGHT_WRIST.value],
+        "lewe_biodro": landmarks[mp_pose.PoseLandmark.LEFT_HIP.value],
+        "prawe_biodro": landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value],
+        "lewe_kolano": landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value],
+        "prawe_kolano": landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value],
+        "lewa_kostka": landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value],
+        "prawa_kostka": landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value],
+    }
+
+
+def update_knee_angle(body_points):
+    left_angle = calculate_angle(
+        body_points["lewe_biodro"],
+        body_points["lewe_kolano"],
+        body_points["lewa_kostka"],
+    )
+    right_angle = calculate_angle(
+        body_points["prawe_biodro"],
+        body_points["prawe_kolano"],
+        body_points["prawa_kostka"],
+    )
+    update_metrics(kneeAngle=int((left_angle + right_angle) / 2))
+
+
+def calculate_knee_angle_value(body_points):
+    left_angle = calculate_angle(
+        body_points["lewe_biodro"],
+        body_points["lewe_kolano"],
+        body_points["lewa_kostka"],
+    )
+    right_angle = calculate_angle(
+        body_points["prawe_biodro"],
+        body_points["prawe_kolano"],
+        body_points["prawa_kostka"],
+    )
+    return int((left_angle + right_angle) / 2)
+
+
+def find_ball_positions(frame):
+    results_yolo = yolo_model(frame, conf=0.4, verbose=False)
+    ball_positions = []
+
+    for result in results_yolo:
+        for box in result.boxes:
+            cls = int(box.cls[0])
+            if result.names[cls] != "sports ball":
+                continue
+
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            area = (x2 - x1) * (y2 - y1)
+            if area <= 200:
+                continue
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.putText(frame, "Pilka", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            ball_positions.append(((x1 + x2) // 2, (y1 + y2) // 2))
+
+    return ball_positions
+
+
+def is_ball_close_to_wrists(frame, body_points, ball_positions):
+    for ball_center in ball_positions:
+        for side in ["lewy_nadgarstek", "prawy_nadgarstek"]:
+            wrist_x = int(body_points[side].x * frame.shape[1])
+            wrist_y = int(body_points[side].y * frame.shape[0])
+            distance = ((ball_center[0] - wrist_x) ** 2 + (ball_center[1] - wrist_y) ** 2) ** 0.5
+
+            if distance < 100:
+                cv2.line(frame, ball_center, (wrist_x, wrist_y), (0, 255, 255), 2)
+                return True
+
+    return False
+
+
+def resize_to_width(frame, target_width):
+    if target_width <= 0 or frame.shape[1] <= target_width:
+        return frame
+
+    scale = target_width / frame.shape[1]
+    target_height = int(frame.shape[0] * scale)
+    return cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+
+
+def analyze_frame(frame, pose, detect_ball=True, source="file"):
+    image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = pose.process(image_rgb)
+
+    body_points = {}
+    contact_detected = False
+    knee_angle = 120
+    score = 0
+    posture_warning = "Nie wykryto sylwetki"
+    contact_warning = None
+    contact_score = None
+
+    if results.pose_landmarks:
+        mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+        body_points = build_body_points(results.pose_landmarks.landmark)
+        knee_angle = calculate_knee_angle_value(body_points)
+
+    ball_positions = find_ball_positions(frame) if detect_ball else []
+
+    if body_points and ball_positions:
+        contact_detected = is_ball_close_to_wrists(frame, body_points, ball_positions)
+
+    if body_points:
+        is_correct, message, points = check_volleyball_position(body_points)
+        score = points
+        posture_warning = None if is_correct else message
+
+        if contact_detected:
+            contact_warning = message
+            contact_score = points
+
+    metrics = {
+        "score": score,
+        "kneeAngle": knee_angle,
+        "warnings": posture_warning,
+        "postureWarnings": posture_warning,
+        "contactWarning": contact_warning,
+        "contactScore": contact_score,
+        "isContact": contact_detected,
+        "hasPose": bool(body_points),
+        "hasBall": bool(ball_positions),
+        "source": source,
+        "isAnalyzing": True,
+    }
+
+    return frame, metrics
+
+
+def preprocess_uploaded_video(video_path, job_id):
+    output_dir = os.path.join(CACHE_DIR, str(job_id))
+    shutil.rmtree(output_dir, ignore_errors=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    frame_paths = []
+    frame_metrics = []
+
+    with state_lock:
+        preprocessed_state.update(
+            {
+                "jobId": job_id,
+                "status": "processing",
+                "progress": 0,
+                "framePaths": [],
+                "metrics": [],
+                "fps": 25,
+                "error": None,
+            }
+        )
+
+    update_metrics(
+        videoProcessingStatus="processing",
+        videoProcessingProgress=0,
+        status="Przygotowuję analizę wideo w tle...",
+        isAnalyzing=False,
+        source="file",
+    )
+
+    capture = cv2.VideoCapture(video_path)
+    if not capture.isOpened():
+        with state_lock:
+            preprocessed_state.update({"status": "error", "error": "Nie można otworzyć pliku wideo"})
+        update_metrics(
+            videoProcessingStatus="error",
+            status="Nie można otworzyć pliku wideo",
+            postureWarnings="Nie można otworzyć pliku wideo",
+        )
+        return
+
+    fps = capture.get(cv2.CAP_PROP_FPS) or 25
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    frame_index = 0
+
+    with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
+        while True:
+            current_source = snapshot_source()
+            if current_source.get("jobId") != job_id:
+                capture.release()
+                return
+
+            success, frame = capture.read()
+            if not success:
+                break
+
+            analyzed_frame, metrics = analyze_frame(frame, pose)
+            frame_path = os.path.join(output_dir, f"{frame_index:06d}.jpg")
+            cv2.imwrite(frame_path, analyzed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+            frame_paths.append(frame_path)
+            frame_metrics.append(metrics)
+            frame_index += 1
+
+            if total_frames:
+                progress = min(99, int((frame_index / total_frames) * 100))
+                with state_lock:
+                    preprocessed_state["progress"] = progress
+                update_metrics(
+                    videoProcessingProgress=progress,
+                    status=f"Przygotowuję analizę wideo: {progress}%",
+                )
+
+    capture.release()
+
+    if not frame_paths:
+        with state_lock:
+            preprocessed_state.update({"status": "error", "error": "Nie znaleziono klatek w pliku"})
+        update_metrics(
+            videoProcessingStatus="error",
+            videoProcessingProgress=0,
+            status="Nie znaleziono klatek w pliku wideo",
+        )
+        return
+
+    with state_lock:
+        preprocessed_state.update(
+            {
+                "jobId": job_id,
+                "status": "ready",
+                "progress": 100,
+                "framePaths": frame_paths,
+                "metrics": frame_metrics,
+                "fps": fps,
+                "error": None,
+            }
+        )
+
+    update_metrics(
+        videoProcessingStatus="ready",
+        videoProcessingProgress=100,
+        status="Wideo gotowe do płynnego odtworzenia",
+        isAnalyzing=False,
+    )
+
+
+def stream_preprocessed_frames():
+    cached = snapshot_preprocessed()
+
+    if cached["status"] != "ready" or not cached["framePaths"]:
+        update_metrics(
+            isAnalyzing=False,
+            source="file",
+            status="Czekam na zakończenie przygotowania wideo",
+        )
+        return
+
+    delay = 1 / max(1, min(float(cached["fps"] or 25), 30))
+
+    while True:
+        current_source = snapshot_source()
+        latest_cache = snapshot_preprocessed()
+        if current_source["mode"] != "file" or latest_cache["jobId"] != cached["jobId"]:
+            break
+
+        for frame_path, metrics in zip(cached["framePaths"], cached["metrics"]):
+            current_source = snapshot_source()
+            latest_cache = snapshot_preprocessed()
+            if current_source["mode"] != "file" or latest_cache["jobId"] != cached["jobId"]:
+                return
+
+            with open(frame_path, "rb") as frame_file:
+                frame_bytes = frame_file.read()
+
+            update_metrics(
+                **metrics,
+                status="Odtwarzam przygotowaną analizę wideo",
+                videoProcessingStatus="ready",
+                videoProcessingProgress=100,
+            )
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+            )
+            time.sleep(delay)
+
+
+def stream_camera_frames(capture_source, current_source):
+    camera = cv2.VideoCapture(capture_source)
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, LIVE_STREAM_WIDTH)
+
     if not camera.isOpened():
-        print(f"Error: Could not open video file {video_path}.")
-        # W razie braku pliku próbujemy kamerę 0
-        camera = cv2.VideoCapture(0)
-        if not camera.isOpened():
-            return
+        update_metrics(
+            isAnalyzing=False,
+            status="Nie mozna otworzyc kamery",
+            warnings="Nie mozna otworzyc kamery",
+            postureWarnings="Nie mozna otworzyc kamery",
+            source="camera",
+        )
+        return
+
+    frame_counter = 0
+    target_delay = 1 / max(1, LIVE_STREAM_FPS)
+
+    while True:
+        latest_source = snapshot_source()
+        if latest_source["mode"] != "camera" or latest_source["cameraIndex"] != current_source["cameraIndex"]:
+            break
+
+        success, frame = camera.read()
+        if not success:
+            break
+
+        display_frame = resize_to_width(frame, LIVE_STREAM_WIDTH)
+        should_analyze_pose = frame_counter % max(1, LIVE_POSE_EVERY_N_FRAMES) == 0
+        should_detect_ball = frame_counter % max(1, LIVE_BALL_EVERY_N_FRAMES) == 0
+
+        if should_analyze_pose:
+            analysis_frame = resize_to_width(display_frame.copy(), LIVE_ANALYSIS_WIDTH)
+            analyzed_frame, metrics = analyze_frame(
+                analysis_frame,
+                pose_tracker,
+                detect_ball=should_detect_ball,
+                source="camera",
+            )
+            display_frame = resize_to_width(analyzed_frame, LIVE_STREAM_WIDTH)
+
+            status = "Analiza live: tryb plynny"
+            if metrics["hasPose"]:
+                status = "Wykryto sylwetke. Analizuje pozycje."
+            if metrics["isContact"]:
+                status = "Wykryto moment odbicia"
+
+            update_metrics(
+                **metrics,
+                status=status,
+                videoProcessingStatus="idle",
+                videoProcessingProgress=0,
+            )
+        else:
+            update_metrics(isAnalyzing=True, source="camera", status="Analiza live: plynny podglad")
+
+        ret, buffer = cv2.imencode(".jpg", display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
+        if not ret:
+            continue
+
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+        )
+
+        frame_counter += 1
+        time.sleep(target_delay)
+
+    camera.release()
+    update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
+
+
+def generate_frames():
+    capture_source, current_source = get_capture_source()
+    if current_source["mode"] == "file":
+        yield from stream_preprocessed_frames()
+        return
+
+    yield from stream_camera_frames(capture_source, current_source)
+    return
+
+    camera = cv2.VideoCapture(capture_source)
+
+    if not camera.isOpened():
+        update_metrics(
+            isAnalyzing=False,
+            status="Nie można otworzyć źródła wideo",
+            warnings="Nie można otworzyć kamery lub pliku wideo",
+            postureWarnings="Nie można otworzyć kamery lub pliku wideo",
+            source=current_source["mode"],
+        )
+        return
+
+    contact_feedback_frames = 0
 
     while True:
         success, frame = camera.read()
         if not success:
+            if current_source["mode"] == "file":
+                camera.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
             break
-            
-        global_metrics["isAnalyzing"] = True
+
+        update_metrics(isAnalyzing=True, status="Analiza w toku", source=current_source["mode"])
 
         image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose_tracker.process(image_rgb)
-        
-        punkty_ciala = {}
-        moment_odbicia = False
+
+        body_points = {}
+        contact_detected = False
 
         if results.pose_landmarks:
             mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            landmarks = results.pose_landmarks.landmark
-            
-            punkty_ciala = {
-                "nos": landmarks[mp_pose.PoseLandmark.NOSE.value],
-                "lewe_ramie": landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value],
-                "prawe_ramie": landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value],
-                "lewy_lokiec": landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value],
-                "prawy_lokiec": landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW.value],
-                "lewy_nadgarstek": landmarks[mp_pose.PoseLandmark.LEFT_WRIST.value],
-                "prawy_nadgarstek": landmarks[mp_pose.PoseLandmark.RIGHT_WRIST.value],
-                "lewe_biodro": landmarks[mp_pose.PoseLandmark.LEFT_HIP.value],
-                "prawe_biodro": landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value],
-                "lewe_kolano": landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value],
-                "prawe_kolano": landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value],
-                "lewa_kostka": landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value],
-                "prawa_kostka": landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value],
-            }
-            
-            # Calculate average knee angle for the dashboard
-            try:
-                l_biodro = punkty_ciala["lewe_biodro"]
-                l_kolano = punkty_ciala["lewe_kolano"]
-                l_kostka = punkty_ciala["lewa_kostka"]
-                kat_l_kolano = calculate_angle(l_biodro, l_kolano, l_kostka)
-                
-                p_biodro = punkty_ciala["prawe_biodro"]
-                p_kolano = punkty_ciala["prawe_kolano"]
-                p_kostka = punkty_ciala["prawa_kostka"]
-                kat_p_kolano = calculate_angle(p_biodro, p_kolano, p_kostka)
-                
-                global_metrics["kneeAngle"] = int((kat_l_kolano + kat_p_kolano) / 2)
-            except KeyError:
-                pass
+            body_points = build_body_points(results.pose_landmarks.landmark)
+            update_knee_angle(body_points)
 
-        # YOLO Ball detection
-        results_yolo = yolo_model(frame, conf=0.4, verbose=False)
-        ball_detections = []
-        for result in results_yolo:
-            for box in result.boxes:
-                cls = int(box.cls[0])
-                if result.names[cls] == 'sports ball':
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    area = (x2 - x1) * (y2 - y1)
-                    if area > 200:
-                        ball_detections.append(box)
-        
-        ball_positions = []
-        for box in ball_detections:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            cv2.putText(frame, 'Pilka', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-            ball_center = ((x1 + x2) // 2, (y1 + y2) // 2)
-            ball_positions.append(ball_center)
-        
-        # Check if the ball is close to wrists
-        if punkty_ciala and ball_positions:
-            for ball_center in ball_positions:
-                for side in ['lewy_nadgarstek', 'prawy_nadgarstek']:
-                    if side in punkty_ciala:
-                        wrist_x = int(punkty_ciala[side].x * frame.shape[1])
-                        wrist_y = int(punkty_ciala[side].y * frame.shape[0])
-                        distance = ((ball_center[0] - wrist_x)**2 + (ball_center[1] - wrist_y)**2)**0.5
-                        
-                        if distance < 100:
-                            cv2.line(frame, ball_center, (wrist_x, wrist_y), (0, 255, 255), 2)
-                            moment_odbicia = True
+        ball_positions = find_ball_positions(frame)
+        update_metrics(hasPose=bool(body_points), hasBall=bool(ball_positions))
 
-        # Process the volleyball position logic if needed
-        # We can either check it all the time or only on 'moment_odbicia'
-        # Let's check it always to give live feedback, but maybe update score differently
-        if punkty_ciala:
-            czy_poprawna, komunikat, punkty = check_volleyball_position(punkty_ciala)
-            global_metrics["score"] = punkty
-            if not czy_poprawna and "IDEALNE ODBICIE" not in komunikat:
-                global_metrics["warnings"] = komunikat
-            else:
-                global_metrics["warnings"] = None
+        if body_points and ball_positions:
+            contact_detected = is_ball_close_to_wrists(frame, body_points, ball_positions)
+
+        if body_points:
+            is_correct, message, points = check_volleyball_position(body_points)
+            posture_warning = None if is_correct else message
+            update_metrics(
+                score=points,
+                warnings=posture_warning,
+                postureWarnings=posture_warning,
+                status="Wykryto sylwetkę. Analizuję pozycję.",
+            )
+
+            if contact_detected:
+                update_metrics(
+                    contactWarning=message,
+                    contactScore=points,
+                    isContact=True,
+                    status="Wykryto moment odbicia",
+                )
+                contact_feedback_frames = 30
         else:
-            global_metrics["warnings"] = "Nie wykryto sylwetki"
-            global_metrics["score"] = 0
+            update_metrics(
+                warnings="Nie wykryto sylwetki",
+                postureWarnings="Nie wykryto sylwetki",
+                score=0,
+                status="Czekam na wykrycie sylwetki",
+            )
 
-        # Encode the frame
-        ret, buffer = cv2.imencode('.jpg', frame)
-        frame_bytes = buffer.tobytes()
+        if contact_feedback_frames > 0:
+            contact_feedback_frames -= 1
+        else:
+            update_metrics(contactWarning=None, contactScore=None, isContact=False)
 
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        ret, buffer = cv2.imencode(".jpg", frame)
+        if not ret:
+            continue
+
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+        )
 
     camera.release()
-    global_metrics["isAnalyzing"] = False
+    update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
+
+
+@app.get("/api/source")
+def get_source():
+    return {**snapshot_source(), "preprocessing": snapshot_preprocessed()}
+
+
+@app.post("/api/source/camera")
+def set_camera_source(camera_index: int = 0):
+    with state_lock:
+        source_state.update(
+            {
+                "mode": "camera",
+                "cameraIndex": camera_index,
+                "videoPath": None,
+                "videoName": None,
+                "jobId": source_state["jobId"] + 1,
+            }
+        )
+        preprocessed_state.update(
+            {
+                "status": "idle",
+                "progress": 0,
+                "framePaths": [],
+                "metrics": [],
+                "error": None,
+            }
+        )
+
+    update_metrics(
+        source="camera",
+        status="Wybrano kamerę",
+        contactWarning=None,
+        contactScore=None,
+        isContact=False,
+        videoProcessingStatus="idle",
+        videoProcessingProgress=0,
+    )
+    return {"ok": True, "source": "camera", "cameraIndex": camera_index}
+
+
+@app.post("/api/source/upload")
+async def upload_video(file: UploadFile = File(...)):
+    allowed_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    _, extension = os.path.splitext(file.filename or "")
+    extension = extension.lower()
+
+    if extension not in allowed_extensions:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "Obsługiwane formaty: mp4, mov, avi, mkv, webm"},
+        )
+
+    with state_lock:
+        job_id = source_state["jobId"] + 1
+
+    target_path = os.path.join(UPLOAD_DIR, f"upload_{job_id}{extension}")
+    with open(target_path, "wb") as target:
+        shutil.copyfileobj(file.file, target)
+
+    with state_lock:
+        source_state.update(
+            {
+                "mode": "file",
+                "cameraIndex": 0,
+                "videoPath": target_path,
+                "videoName": file.filename,
+                "jobId": job_id,
+            }
+        )
+
+    update_metrics(
+        source="file",
+        status=f"Wgrano plik: {file.filename}. Przygotowuję analizę...",
+        contactWarning=None,
+        contactScore=None,
+        isContact=False,
+        videoProcessingStatus="processing",
+        videoProcessingProgress=0,
+    )
+
+    threading.Thread(target=preprocess_uploaded_video, args=(target_path, job_id), daemon=True).start()
+
+    return {"ok": True, "source": "file", "videoName": file.filename, "jobId": job_id}
+
 
 @app.get("/video_feed")
 def video_feed():
     return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
 
 @app.websocket("/ws/metrics")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            await websocket.send_json(global_metrics)
+            await websocket.send_json(snapshot_metrics())
             await asyncio.sleep(0.1)
     except WebSocketDisconnect:
         print("Client disconnected")
 
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

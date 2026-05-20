@@ -4,14 +4,15 @@ import cv2
 import os
 
 # Bezpośrednie importy z MediaPipe, żeby ominąć Twój wcześniejszy błąd
-from mediapipe.python.solutions import drawing_utils as mp_drawing
-from mediapipe.python.solutions import pose as mp_pose
+import mediapipe as mp
 from ultralytics import YOLO
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from logic.coach_engine import check_volleyball_position
 
 yolo_model = YOLO('yolov8s.pt')
+mp_drawing = mp.solutions.drawing_utils
+mp_pose = mp.solutions.pose
 
 VIDEO_PATH = "data/nagranie_testowe.mp4" 
 video = cv2.VideoCapture(VIDEO_PATH)
