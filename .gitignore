@@ -25,3 +25,6 @@ data/*.mov
 *.pt
 data/*.db
 !data/models/.gitkeep
+data/audio/cache/
+data/models/vosk-model-small-pl-0.22/
+data/models/vosk-model-small-pl-0.22.zip

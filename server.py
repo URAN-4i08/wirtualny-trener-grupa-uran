@@ -15,6 +15,8 @@ from ultralytics import YOLO
 # Add the root directory to path to import logic modules.
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from logic.coach_engine import calculate_angle, check_volleyball_position
+from audio.voice_control import get_announcer
+from audio import speech_recognition as vosk_stt
 
 app = FastAPI()
 
@@ -78,11 +80,65 @@ LIVE_STREAM_WIDTH = int(os.getenv("LIVE_STREAM_WIDTH", "960"))
 LIVE_ANALYSIS_WIDTH = int(os.getenv("LIVE_ANALYSIS_WIDTH", "640"))
 LIVE_POSE_EVERY_N_FRAMES = int(os.getenv("LIVE_POSE_EVERY_N_FRAMES", "3"))
 LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "6"))
+LIVE_NO_POSE_GRACE_FRAMES = int(os.getenv("LIVE_NO_POSE_GRACE_FRAMES", "4"))
+
+
+def build_live_status(metrics):
+    if metrics.get("isContact"):
+        return "Wykryto moment odbicia piłki"
+    if metrics.get("hasPose"):
+        if metrics.get("postureWarnings"):
+            return "Wykryto błąd postawy — zobacz podpowiedź obok"
+        return "Sylwetka w kadrze — pozycja wygląda dobrze"
+    return "Szukam sylwetki w kadrze..."
+
+
+def stabilize_live_metrics(current, previous, no_pose_streak):
+    if not previous:
+        return current, 0
+
+    if current.get("hasPose"):
+        return current, 0
+
+    no_pose_streak += 1
+    if no_pose_streak >= LIVE_NO_POSE_GRACE_FRAMES:
+        return current, no_pose_streak
+
+    stabilized = {**current}
+    for key in (
+        "postureWarnings",
+        "warnings",
+        "score",
+        "kneeAngle",
+        "hasPose",
+        "hasBall",
+        "contactWarning",
+        "contactScore",
+        "isContact",
+    ):
+        if key in previous:
+            stabilized[key] = previous[key]
+    return stabilized, no_pose_streak
 
 
 def update_metrics(**kwargs):
     with state_lock:
+        old_posture = global_metrics.get("postureWarnings")
+        old_contact = global_metrics.get("contactWarning")
+        is_analyzing = global_metrics.get("isAnalyzing")
         global_metrics.update(kwargs)
+        new_posture = global_metrics.get("postureWarnings")
+        new_contact = global_metrics.get("contactWarning")
+        is_analyzing = global_metrics.get("isAnalyzing", is_analyzing)
+
+    if "postureWarnings" in kwargs or "contactWarning" in kwargs:
+        get_announcer().handle_metrics_change(
+            old_posture,
+            new_posture,
+            old_contact,
+            new_contact,
+            bool(is_analyzing),
+        )
 
 
 def snapshot_metrics():
@@ -415,6 +471,16 @@ def stream_camera_frames(capture_source, current_source):
 
     frame_counter = 0
     target_delay = 1 / max(1, LIVE_STREAM_FPS)
+    last_metrics = None
+    no_pose_streak = 0
+
+    update_metrics(
+        isAnalyzing=True,
+        source="camera",
+        status="Analiza kamery w toku",
+        videoProcessingStatus="idle",
+        videoProcessingProgress=0,
+    )
 
     while True:
         latest_source = snapshot_source()
@@ -439,20 +505,15 @@ def stream_camera_frames(capture_source, current_source):
             )
             display_frame = resize_to_width(analyzed_frame, LIVE_STREAM_WIDTH)
 
-            status = "Analiza live: tryb plynny"
-            if metrics["hasPose"]:
-                status = "Wykryto sylwetke. Analizuje pozycje."
-            if metrics["isContact"]:
-                status = "Wykryto moment odbicia"
+            metrics, no_pose_streak = stabilize_live_metrics(metrics, last_metrics, no_pose_streak)
+            last_metrics = metrics
 
             update_metrics(
                 **metrics,
-                status=status,
+                status=build_live_status(metrics),
                 videoProcessingStatus="idle",
                 videoProcessingProgress=0,
             )
-        else:
-            update_metrics(isAnalyzing=True, source="camera", status="Analiza live: plynny podglad")
 
         ret, buffer = cv2.imencode(".jpg", display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
         if not ret:
@@ -651,6 +712,72 @@ async def upload_video(file: UploadFile = File(...)):
 @app.get("/video_feed")
 def video_feed():
     return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.get("/api/voice/status")
+def voice_status():
+    return {
+        "ready": vosk_stt.model_is_ready(),
+        "engine": "vosk",
+        "model": vosk_stt.MODEL_DIR_NAME,
+        "sampleRate": vosk_stt.SAMPLE_RATE,
+    }
+
+
+@app.post("/api/voice/prepare")
+def voice_prepare():
+    try:
+        vosk_stt.download_model()
+        return {"ok": True, "ready": True}
+    except Exception as error:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "ready": False, "error": str(error)},
+        )
+
+
+@app.websocket("/ws/voice")
+async def voice_websocket(websocket: WebSocket):
+    await websocket.accept()
+
+    try:
+        recognizer = vosk_stt.create_recognizer()
+    except FileNotFoundError:
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": "Brak modelu Vosk. Uruchom: POST /api/voice/prepare lub poczekaj na pobranie modelu.",
+            }
+        )
+        await websocket.close()
+        return
+    except Exception as error:
+        error_text = str(error).encode("ascii", errors="ignore").decode("ascii") or "nieznany blad"
+        await websocket.send_json(
+            {"type": "error", "message": f"Nie mozna uruchomic rozpoznawania mowy: {error_text}"}
+        )
+        await websocket.close()
+        return
+
+    await websocket.send_json({"type": "ready"})
+
+    try:
+        while True:
+            message = await websocket.receive()
+            chunk = message.get("bytes")
+            if not chunk:
+                continue
+
+            if recognizer.AcceptWaveform(chunk):
+                text = vosk_stt.parse_result(recognizer.Result(), "text")
+                if text:
+                    await websocket.send_json({"type": "final", "text": text})
+            else:
+                partial = vosk_stt.parse_result(recognizer.PartialResult(), "partial")
+                if partial:
+                    await websocket.send_json({"type": "partial", "text": partial})
+    except WebSocketDisconnect:
+        pass
 
 
 @app.websocket("/ws/metrics")

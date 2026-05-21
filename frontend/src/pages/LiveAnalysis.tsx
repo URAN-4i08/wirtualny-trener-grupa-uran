@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useVoiceCommands } from '../context/VoiceCommandContext';
 import {
   AlertTriangle,
   Camera,
@@ -29,6 +30,35 @@ type Metrics = {
   videoProcessingStatus: 'idle' | 'processing' | 'ready' | 'error';
   videoProcessingProgress: number;
 };
+
+function resolveAnalysisLabels(
+  metrics: Metrics,
+  isAnalyzing: boolean,
+  cameraIndex: number,
+  videoName: string | null,
+) {
+  const sourceLabel =
+    metrics.source === 'camera' ? `Kamera ${cameraIndex + 1}` : videoName || 'Plik wideo';
+
+  if (!isAnalyzing) {
+    return { statusLabel: metrics.status, sourceLabel };
+  }
+
+  if (metrics.isContact) {
+    return { statusLabel: 'Wykryto odbicie piłki', sourceLabel };
+  }
+
+  if (metrics.hasPose) {
+    return {
+      statusLabel: metrics.postureWarnings
+        ? 'Popraw postawę — szczegóły w sekcji obok'
+        : 'Analiza postawy — pozycja wygląda dobrze',
+      sourceLabel,
+    };
+  }
+
+  return { statusLabel: 'Czekam na sylwetkę w kadrze…', sourceLabel };
+}
 
 const initialMetrics: Metrics = {
   score: 0,
@@ -103,11 +133,47 @@ export default function LiveAnalysis() {
 
   const score = Math.max(0, Math.min(100, metrics.score));
   const contactScore = metrics.contactScore ?? score;
-  const mainFeedback = metrics.postureWarnings || 'Pozycja wygląda dobrze';
+  const { statusLabel, sourceLabel } = resolveAnalysisLabels(
+    metrics,
+    isAnalyzing,
+    selectedCameraIndex,
+    selectedVideoName,
+  );
+  const mainFeedback = (() => {
+    if (!isAnalyzing) return metrics.postureWarnings || '—';
+    if (!metrics.hasPose) return 'Stań w kadrze kamery, aby ocenić postawę';
+    return metrics.postureWarnings || 'Pozycja wygląda dobrze';
+  })();
   const contactFeedback = metrics.contactWarning || 'Czekam na odbicie piłki';
   const isPreparingVideo = metrics.source === 'file' && metrics.videoProcessingStatus === 'processing';
   const isVideoReady = metrics.source !== 'file' || metrics.videoProcessingStatus === 'ready';
   const canStartAnalysis = !isPreparingVideo && isVideoReady;
+
+  const isAnalyzingRef = useRef(isAnalyzing);
+  const canStartAnalysisRef = useRef(canStartAnalysis);
+  const { registerLiveHandlers } = useVoiceCommands();
+
+  useEffect(() => {
+    isAnalyzingRef.current = isAnalyzing;
+  }, [isAnalyzing]);
+
+  useEffect(() => {
+    canStartAnalysisRef.current = canStartAnalysis;
+  }, [canStartAnalysis]);
+
+  const startAnalysis = useCallback(() => {
+    if (!canStartAnalysisRef.current && !isAnalyzingRef.current) return;
+    setIsAnalyzing(true);
+  }, []);
+
+  const stopAnalysis = useCallback(() => {
+    setIsAnalyzing(false);
+  }, []);
+
+  useEffect(() => {
+    registerLiveHandlers({ startAnalysis, stopAnalysis });
+    return () => registerLiveHandlers(null);
+  }, [registerLiveHandlers, startAnalysis, stopAnalysis]);
 
   const pieData = [
     { name: 'Punkty', value: score, color: '#4ade80' },
@@ -235,8 +301,8 @@ export default function LiveAnalysis() {
 
           <button
             onClick={() => {
-              if (!canStartAnalysis && !isAnalyzing) return;
-              setIsAnalyzing((current) => !current);
+              if (isAnalyzing) stopAnalysis();
+              else startAnalysis();
             }}
             disabled={!canStartAnalysis && !isAnalyzing}
             className={clsx(
@@ -309,10 +375,8 @@ export default function LiveAnalysis() {
         <div className="flex flex-col gap-4 overflow-y-auto pr-2">
           <div className="glass-card p-5 rounded-2xl border-white/10">
             <h3 className="text-sm text-on-surface-variant font-medium mb-1">Status</h3>
-            <p className="text-white font-medium">{metrics.status}</p>
-            <p className="text-xs mt-2 text-on-surface-variant">
-              Źródło: {metrics.source === 'camera' ? `kamera ${selectedCameraIndex + 1}` : selectedVideoName || 'plik wideo'}
-            </p>
+            <p className="text-white font-medium min-h-[1.5rem]">{statusLabel}</p>
+            <p className="text-xs mt-2 text-on-surface-variant">Źródło: {sourceLabel}</p>
             {metrics.source === 'file' && (
               <p className="text-xs mt-2 text-on-surface-variant">
                 Przygotowanie: {metrics.videoProcessingStatus === 'ready' ? 'gotowe' : `${metrics.videoProcessingProgress}%`}

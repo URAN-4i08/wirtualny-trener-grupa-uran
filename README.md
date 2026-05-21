@@ -20,7 +20,7 @@
   * **YOLO v11:** Błyskawiczna detekcja piłki i inicjacja algorytmów śledzenia.
 * **Audio & Głos:**
   * **Vosk:** Lekkie, lokalne rozpoznawanie komend głosowych (STT).
-  * **pyttsx3:** System komunikatów głosowych trenera (TTS) działający offline.
+  * **TTS (Edge / Amazon Polly Ivona / pyttsx3):** Komunikaty trenera czytane na głos z laptopa (`audio/voice_control.py`).
 * **Baza danych:** SQLite (archiwizacja progresu, sesji treningowych i błędów).
 * **Wizualizacja:** Matplotlib (generowanie wykresów radarowych i kołowych skuteczności).
 

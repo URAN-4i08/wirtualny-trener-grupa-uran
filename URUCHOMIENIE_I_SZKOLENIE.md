@@ -82,6 +82,47 @@ Aplikacja pokazuje dwa typy informacji:
 
 To odpowiada ustaleniu: stale pomagamy poprawiać postawę, ale samo odbicie oceniamy tylko w momencie kontaktu z piłką.
 
+### Komunikaty głosowe (TTS)
+
+Backend może czytać podpowiedzi na głos przez głośniki laptopa (np. gdy kamera stoi dalej od zawodnika).
+
+Domyślnie działa polski głos neuralny (Edge TTS). Aby użyć głosów Ivona (Ewa, Maja, Jacek) przez Amazon Polly:
+
+```bash
+export VOICE_ENABLED=1
+export TTS_ENGINE=polly
+export TTS_VOICE=Ewa
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_DEFAULT_REGION=eu-central-1
+```
+
+Opcjonalne zmienne:
+
+```bash
+export VOICE_COOLDOWN_SEC=5   # nie powtarzaj tej samej podpowiedzi częściej niż co 5 s
+export TTS_ENGINE=edge        # domyślnie, bez kluczy AWS
+export TTS_VOICE=pl-PL-ZofiaNeural
+export VOICE_ENABLED=0        # wyłączenie mowy
+```
+
+Komunikaty są czytane przy zmianie podpowiedzi, np. `Ugnij kolana!`, `Złącz dłonie!`, `Wyprostuj łokcie!`.
+
+### Sterowanie głosowe UI
+
+**Brave:** wbudowane rozpoznawanie mowy przeglądarki nie działa (blokuje Google). Aplikacja używa lokalnego **Vosk** na backendzie — w sidebarze widać „Nasłuch (Vosk lokalny)”.
+
+Przy pierwszym uruchomieniu backend pobierze model PL (~50 MB) do `data/models/`. Wymagany działający backend na porcie 8000.
+
+| Komenda | Akcja |
+|---------|--------|
+| `rozpocznij` | Start analizy (na stronie Live Analysis) |
+| `zatrzymaj` | Stop analizy |
+| `panel` | Przejście do Dashboard (panel główny) |
+| `analiza` | Przejście do Live Analysis |
+
+W Brave: ikona lwa → ustawienia strony → **Mikrofon: Zezwól**. W panelu bocznym pojawi się „Słyszę: …” gdy fraza została rozpoznana.
+
 ## 5a. Dlaczego upload wideo startuje z opóźnieniem
 
 Plik wideo jest najpierw analizowany w tle. Backend zapisuje gotowe klatki z narysowanym szkieletem, piłką i metrykami, a dopiero po zakończeniu przygotowania frontend pozwala kliknąć `Rozpocznij`.
@@ -187,7 +228,8 @@ Minimalny scenariusz:
 
 ## 9. Następne etapy projektu
 
-- Dodać prawdziwe sterowanie głosowe i TTS.
+- Sterowanie głosowe UI: komendy w przeglądarce (Chrome/Edge, `VoiceCommandProvider` w frontendzie).
+- TTS podpowiedzi trenera: `audio/voice_control.py`.
 - Dodać własny model YOLO dla piłki siatkowej.
 - Dodać historię analiz i bazę SQLite.
 - Dodać tryb dwóch kamer.
