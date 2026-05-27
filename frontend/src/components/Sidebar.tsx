@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Video, History as HistoryIcon, Dumbbell, Mic, MicOff, Loader2 } from 'lucide-react';
+import { LayoutDashboard, Video, History as HistoryIcon, Dumbbell, Flame, Mic, MicOff, Loader2 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useVoiceCommands, VOICE_COMMAND_LABELS } from '../context/VoiceCommandContext';
@@ -10,13 +10,14 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const navItems = [
-  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/live', label: 'Live Analysis', icon: Video },
-  { path: '/history', label: 'History', icon: HistoryIcon },
+  { path: '/dashboard', label: 'Panel', icon: LayoutDashboard },
+  { path: '/warmup', label: 'Rozgrzewka', icon: Flame },
+  { path: '/live', label: 'Analiza', icon: Video },
+  { path: '/history', label: 'Historia', icon: HistoryIcon },
 ];
 
 export default function Sidebar() {
-  const { user, signOut } = useAuth();
+  const { displayName, signOut } = useAuth();
   const {
     isSupported,
     isListening,
@@ -33,9 +34,9 @@ export default function Sidebar() {
 
   const voiceButtonDisabled = isPreparing || isActivating;
   const voiceButtonLabel = isPreparing
-    ? 'Przygotowuję głos…'
+    ? 'Przygotowuję głos...'
     : isActivating
-      ? 'Proszę o mikrofon…'
+      ? 'Proszę o mikrofon...'
       : enabled
         ? 'Wyłącz głos'
         : 'Włącz sterowanie głosem';
@@ -46,7 +47,7 @@ export default function Sidebar() {
         <div className="w-10 h-10 rounded-lg bg-primary-container/20 flex items-center justify-center neon-glow">
           <Dumbbell className="w-6 h-6 text-primary" />
         </div>
-        <h1 className="text-xl font-bold font-h1 tracking-wider text-primary">Cyber Trener</h1>
+        <h1 className="text-xl font-bold font-h1 tracking-wider text-primary">Wirtualny Trener</h1>
       </div>
 
       <div className="mb-5 px-1 shrink-0">
@@ -76,12 +77,12 @@ export default function Sidebar() {
         </button>
         {!enabled && !isPreparing && (
           <p className="text-xs text-on-surface-variant mt-2 px-1 text-center leading-relaxed">
-            Kliknij — przeglądarka poprosi o mikrofon
+            Kliknij, a przeglądarka poprosi o dostęp do mikrofonu.
           </p>
         )}
         {error && (
           <div className="mt-3 rounded-lg border border-error/40 bg-error/10 px-3 py-2">
-            <p className="text-xs font-semibold text-error mb-1">Blad glosu</p>
+            <p className="text-xs font-semibold text-error mb-1">Błąd głosu</p>
             <p className="text-xs text-error/90 leading-relaxed break-words">{error}</p>
           </div>
         )}
@@ -120,9 +121,9 @@ export default function Sidebar() {
               <span className="text-white font-medium text-xs">
                 {isListening
                   ? engine === 'vosk'
-                    ? 'Aktywny (Vosk)'
+                    ? 'Aktywny lokalnie'
                     : 'Aktywny'
-                  : 'Łączenie…'}
+                  : 'Łączenie...'}
               </span>
             </div>
             <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -141,22 +142,23 @@ export default function Sidebar() {
 
         {!isSupported && !enabled && (
           <p className="text-xs text-amber-300/90 text-center">
-            Do głosu potrzebny backend: port 8000
+            Do głosu potrzebny jest lokalny serwer.
           </p>
         )}
 
         <div className="bg-surface-variant/50 rounded-xl p-4 border border-white/5 text-sm">
-          <p className="text-on-surface-variant mb-2">System Status</p>
+          <p className="text-on-surface-variant mb-2">Status systemu</p>
           <div className="flex items-center gap-2 mb-4">
             <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-            <span className="text-green-400 font-medium text-xs">Operational</span>
+            <span className="text-green-400 font-medium text-xs">Działa</span>
           </div>
-          
+
           <div className="pt-4 border-t border-white/10">
             <p className="text-xs text-on-surface-variant truncate mb-2">
-              Konto: <span className="text-white">{user?.email}</span>
+              Konto: <span className="text-white">{displayName}</span>
             </p>
-            <button 
+            <button
+              type="button"
               onClick={signOut}
               className="w-full text-left text-xs text-red-400 hover:text-red-300 transition-colors"
             >

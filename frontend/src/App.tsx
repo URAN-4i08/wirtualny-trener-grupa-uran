@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import LiveAnalysis from './pages/LiveAnalysis';
 import History from './pages/History';
+import Warmup from './pages/Warmup';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import { VoiceCommandProvider } from './context/VoiceCommandContext';
@@ -12,6 +13,11 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
+};
+
+const StartRoute = () => {
+  const { user } = useAuth();
+  return <Navigate to={user ? '/dashboard' : '/login'} replace />;
 };
 
 const Layout = ({ children }: { children: React.ReactNode }) => {
@@ -33,8 +39,9 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<StartRoute />} />
             <Route path="/dashboard" element={<ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>} />
+            <Route path="/warmup" element={<ProtectedRoute><Layout><Warmup /></Layout></ProtectedRoute>} />
             <Route path="/live" element={<ProtectedRoute><Layout><LiveAnalysis /></Layout></ProtectedRoute>} />
             <Route path="/history" element={<ProtectedRoute><Layout><History /></Layout></ProtectedRoute>} />
           </Routes>

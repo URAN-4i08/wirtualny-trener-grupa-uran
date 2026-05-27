@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-// Zabezpieczenie przed wpisaniem dosłownego "twoj_url" bez "https://" przez użytkownika
 const isValidUrl = (url: string) => {
   try {
     new URL(url);
@@ -13,7 +12,9 @@ const isValidUrl = (url: string) => {
   }
 };
 
-const supabaseUrl = isValidUrl(rawUrl) ? rawUrl : 'https://placeholder.supabase.co';
-const supabaseAnonKey = rawKey.length > 10 ? rawKey : 'placeholder-key';
+export const isSupabaseConfigured = isValidUrl(rawUrl) && rawKey.length > 10;
+
+const supabaseUrl = isSupabaseConfigured ? rawUrl : 'https://placeholder.supabase.co';
+const supabaseAnonKey = isSupabaseConfigured ? rawKey : 'placeholder-key';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

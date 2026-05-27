@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { supabase } from '../config/supabase';
+import { isSupabaseConfigured, supabase } from '../config/supabase';
 import { Activity, Mail, Lock } from 'lucide-react';
 
 const Login: React.FC = () => {
@@ -10,21 +10,28 @@ const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLogin = async (event: React.FormEvent) => {
+    event.preventDefault();
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
+    if (!isSupabaseConfigured) {
+      setError('Brakuje konfiguracji Supabase. Dodaj plik frontend/.env z adresem projektu i kluczem anon.');
+      setLoading(false);
+      return;
+    }
+
+    const { error: loginError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error) {
-      setError(error.message);
+    if (loginError) {
+      setError(loginError.message || 'Nie udało się zalogować. Sprawdź email i hasło.');
     } else {
       navigate('/dashboard');
     }
+
     setLoading(false);
   };
 
@@ -34,11 +41,16 @@ const Login: React.FC = () => {
         <div className="text-center">
           <Activity className="mx-auto h-12 w-12 text-primary" />
           <h2 className="mt-6 text-3xl font-bold text-white">Witaj ponownie</h2>
-          <p className="mt-2 text-sm text-zinc-400">Zaloguj się do swojego konta trenera</p>
+          <p className="mt-2 text-sm text-zinc-400">Zaloguj się do swojego konta trenera.</p>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleLogin}>
+          {!isSupabaseConfigured && (
+            <div className="bg-amber-500/10 border border-amber-500/50 text-amber-200 rounded-lg p-3 text-sm text-center">
+              Brakuje konfiguracji Supabase w pliku frontend/.env.
+            </div>
+          )}
           {error && (
-            <div className="bg-red-500/10 border border-red-500/50 text-red-500 rounded-lg p-3 text-sm text-center">
+            <div className="bg-red-500/10 border border-red-500/50 text-red-400 rounded-lg p-3 text-sm text-center">
               {error}
             </div>
           )}
@@ -53,7 +65,7 @@ const Login: React.FC = () => {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(event) => setEmail(event.target.value)}
                   className="block w-full pl-10 pr-3 py-2 border border-zinc-700 rounded-lg bg-zinc-800 text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition"
                   placeholder="twoj@email.com"
                 />
@@ -69,7 +81,7 @@ const Login: React.FC = () => {
                   type="password"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(event) => setPassword(event.target.value)}
                   className="block w-full pl-10 pr-3 py-2 border border-zinc-700 rounded-lg bg-zinc-800 text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition"
                   placeholder="••••••••"
                 />
@@ -80,7 +92,7 @@ const Login: React.FC = () => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary focus:ring-offset-zinc-900 transition disabled:opacity-50"
+            className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-surface bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary focus:ring-offset-zinc-900 transition disabled:opacity-50"
           >
             {loading ? 'Logowanie...' : 'Zaloguj się'}
           </button>
