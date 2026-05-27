@@ -6,7 +6,8 @@ import threading
 import time
 
 import cv2
-from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+import requests
+from fastapi import FastAPI, File, Header, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import mediapipe as mp
@@ -47,28 +48,66 @@ if SUPABASE_URL and SUPABASE_KEY:
     except Exception as e:
         print(f"Błąd inicjalizacji Supabase: {e}")
 
-def save_training_session(user_id, source, start_time, end_time, stats):
-    if not supabase_client or not user_id:
+def save_training_session(user_id, source, start_time, end_time, stats, access_token=None):
+    if not SUPABASE_URL or not SUPABASE_KEY or not user_id:
+        print("[supabase] Brak konfiguracji lub user_id, pomijam zapis treningu.")
         return
+
+    if not access_token:
+        print("[supabase] Brak tokenu sesji użytkownika, pomijam zapis treningu.")
+        return
+
     try:
-        training_res = supabase_client.table('trainings').insert({
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
+
+        training_payload = {
             'user_id': user_id,
             'start_time': start_time.isoformat(),
             'end_time': end_time.isoformat(),
             'source': source,
             'overall_score': stats.get('overall_score', 0),
             'status': 'completed'
-        }).execute()
-        
-        training_id = training_res.data[0]['id']
-        
-        supabase_client.table('training_stats').insert({
+        }
+
+        training_response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/trainings",
+            headers=headers,
+            json=training_payload,
+            timeout=15,
+        )
+        if not training_response.ok:
+            print(f"[supabase] Błąd zapisu treningu: {training_response.status_code} {training_response.text}")
+            return
+
+        training_data = training_response.json()
+        if not training_data:
+            print("[supabase] Baza nie zwróciła id treningu po zapisie.")
+            return
+
+        training_id = training_data[0]['id']
+
+        stats_payload = {
             'training_id': training_id,
             'total_contacts': stats.get('total_contacts', 0),
             'avg_knee_angle': stats.get('avg_knee_angle', 0),
             'posture_warnings_count': stats.get('posture_warnings_count', 0),
             'avg_contact_score': stats.get('avg_contact_score', 0)
-        }).execute()
+        }
+        stats_response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/training_stats",
+            headers=headers,
+            json=stats_payload,
+            timeout=15,
+        )
+        if not stats_response.ok:
+            print(f"[supabase] Błąd zapisu statystyk: {stats_response.status_code} {stats_response.text}")
+            return
+
         print(f"Zapisano trening dla użytkownika {user_id}")
     except Exception as e:
         print(f"Błąd zapisu do Supabase: {e}")
@@ -82,6 +121,7 @@ source_state = {
     "videoName": None,
     "jobId": 0,
     "userId": None,
+    "accessToken": None,
 }
 
 preprocessed_state = {
@@ -208,6 +248,41 @@ def get_capture_source():
         return current_source["videoPath"], current_source
 
     return int(current_source["cameraIndex"]), current_source
+
+
+def stop_current_analysis(status="Analiza przerwana"):
+    with state_lock:
+        source_state.update(
+            {
+                "mode": "stopped",
+                "videoPath": None,
+                "videoName": None,
+                "jobId": source_state["jobId"] + 1,
+                "accessToken": None,
+            }
+        )
+        preprocessed_state.update(
+            {
+                "jobId": source_state["jobId"],
+                "status": "idle",
+                "progress": 0,
+                "framePaths": [],
+                "metrics": [],
+                "error": None,
+            }
+        )
+
+    update_metrics(
+        isAnalyzing=False,
+        status=status,
+        warnings=None,
+        postureWarnings=None,
+        contactWarning=None,
+        contactScore=None,
+        isContact=False,
+        videoProcessingStatus="idle",
+        videoProcessingProgress=0,
+    )
 
 
 def build_body_points(landmarks):
@@ -400,6 +475,12 @@ def preprocess_uploaded_video(video_path, job_id):
             current_source = snapshot_source()
             if current_source.get("jobId") != job_id:
                 capture.release()
+                update_metrics(
+                    isAnalyzing=False,
+                    status="Przerwano przygotowanie wideo",
+                    videoProcessingStatus="idle",
+                    videoProcessingProgress=0,
+                )
                 return
 
             success, frame = capture.read()
@@ -477,7 +558,14 @@ def preprocess_uploaded_video(video_path, job_id):
     
     current_source = snapshot_source()
     if current_source.get("userId"):
-        save_training_session(current_source["userId"], "file", start_time, end_time, stats)
+        save_training_session(
+            current_source["userId"],
+            "file",
+            start_time,
+            end_time,
+            stats,
+            current_source.get("accessToken"),
+        )
 
 
 def stream_preprocessed_frames():
@@ -635,11 +723,22 @@ def stream_camera_frames(capture_source, current_source):
         
         current_src = snapshot_source()
         if current_src.get("userId"):
-            save_training_session(current_src["userId"], "camera", start_time, end_time, final_stats)
+            save_training_session(
+                current_src["userId"],
+                "camera",
+                start_time,
+                end_time,
+                final_stats,
+                current_src.get("accessToken"),
+            )
 
 
 def generate_frames():
     capture_source, current_source = get_capture_source()
+    if current_source["mode"] == "stopped":
+        update_metrics(isAnalyzing=False, status="Analiza przerwana")
+        return
+
     if current_source["mode"] == "file":
         yield from stream_preprocessed_frames()
         return
@@ -744,7 +843,14 @@ def generate_frames():
         
         current_src = snapshot_source()
         if current_src.get("userId"):
-            save_training_session(current_src["userId"], "camera", start_time, end_time, final_stats)
+            save_training_session(
+                current_src["userId"],
+                "camera",
+                start_time,
+                end_time,
+                final_stats,
+                current_src.get("accessToken"),
+            )
 
 
 @app.get("/api/source")
@@ -752,8 +858,15 @@ def get_source():
     return {**snapshot_source(), "preprocessing": snapshot_preprocessed()}
 
 
+@app.post("/api/analysis/stop")
+def stop_analysis():
+    stop_current_analysis()
+    return {"ok": True}
+
+
 @app.post("/api/source/camera")
-def set_camera_source(camera_index: int = 0, user_id: str = None):
+def set_camera_source(camera_index: int = 0, user_id: str = None, authorization: str | None = Header(default=None)):
+    access_token = authorization.removeprefix("Bearer ").strip() if authorization else None
     with state_lock:
         source_state.update(
             {
@@ -763,6 +876,7 @@ def set_camera_source(camera_index: int = 0, user_id: str = None):
                 "videoName": None,
                 "jobId": source_state["jobId"] + 1,
                 "userId": user_id,
+                "accessToken": access_token,
             }
         )
         preprocessed_state.update(
@@ -788,7 +902,12 @@ def set_camera_source(camera_index: int = 0, user_id: str = None):
 
 
 @app.post("/api/source/upload")
-async def upload_video(file: UploadFile = File(...), user_id: str = None):
+async def upload_video(
+    file: UploadFile = File(...),
+    user_id: str = None,
+    authorization: str | None = Header(default=None),
+):
+    access_token = authorization.removeprefix("Bearer ").strip() if authorization else None
     allowed_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
     _, extension = os.path.splitext(file.filename or "")
     extension = extension.lower()
@@ -815,6 +934,7 @@ async def upload_video(file: UploadFile = File(...), user_id: str = None):
                 "videoName": file.filename,
                 "jobId": job_id,
                 "userId": user_id,
+                "accessToken": access_token,
             }
         )
 

@@ -1,83 +1,113 @@
-export type VoiceCommandId = 'start' | 'stop' | 'panel' | 'analiza';
+export type VoiceCommandId = 'start' | 'stop' | 'panel' | 'rozgrzewka' | 'analiza' | 'historia';
 
 export const VOICE_COMMAND_LABELS: Record<VoiceCommandId, string> = {
   start: 'Rozpocznij',
   stop: 'Zatrzymaj',
   panel: 'Panel',
+  rozgrzewka: 'Rozgrzewka',
   analiza: 'Analiza',
+  historia: 'Historia',
 };
 
-/** Dłuższe frazy pierwsze — ważna kolejność dopasowania. */
 const PHRASE_RULES: { id: VoiceCommandId; phrases: string[] }[] = [
+  {
+    id: 'rozgrzewka',
+    phrases: [
+      'idź do rozgrzewki',
+      'otwórz rozgrzewkę',
+      'przejdź do rozgrzewki',
+      'pokaż rozgrzewkę',
+      'zacznij rozgrzewkę',
+    ],
+  },
+  {
+    id: 'historia',
+    phrases: [
+      'idź do historii',
+      'otwórz historię',
+      'przejdź do historii',
+      'pokaż historię',
+      'historia treningów',
+    ],
+  },
   {
     id: 'analiza',
     phrases: [
-      'idz do analizy',
-      'otworz analize',
-      'przejdz do analizy',
-      'analiza live',
-      'live analysis',
+      'idź do analizy',
+      'otwórz analizę',
+      'przejdź do analizy',
       'strona analizy',
+      'analiza treningu',
     ],
   },
   {
     id: 'panel',
     phrases: [
-      'idz do panelu',
-      'otworz panel',
-      'przejdz do panelu',
-      'panel glowny',
-      'strona glowna',
+      'idź do panelu',
+      'otwórz panel',
+      'przejdź do panelu',
+      'panel główny',
+      'strona główna',
     ],
   },
   {
     id: 'start',
     phrases: [
-      'rozpocznij analize',
-      'wlacz analize',
+      'rozpocznij analizę',
+      'włącz analizę',
       'start analizy',
-      'start analysis',
-      'begin analysis',
-      'zacznij analize',
+      'zacznij analizę',
+      'rozpocznij trening',
+      'zacznij trening',
     ],
   },
   {
     id: 'stop',
     phrases: [
-      'zatrzymaj analize',
-      'wylacz analize',
+      'zatrzymaj analizę',
+      'wyłącz analizę',
       'stop analizy',
-      'stop analysis',
       'koniec analizy',
+      'zatrzymaj trening',
+      'zakończ trening',
     ],
   },
 ];
 
-/** Pojedyncze słowa PL + EN. */
 const KEYWORD_RULES: { id: VoiceCommandId; patterns: RegExp[] }[] = [
   {
+    id: 'rozgrzewka',
+    patterns: [/\brozgrzewka\b/, /\brozgrzewke\b/, /\brozgrzewki\b/],
+  },
+  {
+    id: 'historia',
+    patterns: [/\bhistoria\b/, /\bhistorie\b/, /\bhistorii\b/],
+  },
+  {
     id: 'analiza',
-    patterns: [/\banaliza\b/, /\banalize\b/, /\blive\b.*\banaliz/],
+    patterns: [/\banaliza\b/, /\banalize\b/, /\banalizy\b/],
   },
   {
     id: 'panel',
-    patterns: [/\bpanel\b/, /\bpanelu\b/, /\bpanelu\b/],
+    patterns: [/\bpanel\b/, /\bpanelu\b/, /\bglowna\b/, /\bgłówna\b/],
   },
   {
     id: 'start',
-    patterns: [/\brozpocznij\b/, /\bzacznij\b/, /\bwlacz\b/, /\bstart\b/, /\bbegin\b/],
+    patterns: [/\brozpocznij\b/, /\bzacznij\b/, /\bwlacz\b/, /\bwłącz\b/, /\bstart\b/],
   },
   {
     id: 'stop',
-    patterns: [/\bzatrzymaj\b/, /\bzatrzymac\b/, /\bwylacz\b/, /\bstop\b/, /\bend\b/, /\bkoniec\b/],
+    patterns: [/\bzatrzymaj\b/, /\bzatrzymac\b/, /\bzatrzymać\b/, /\bwylacz\b/, /\bwyłącz\b/, /\bstop\b/, /\bkoniec\b/],
   },
 ];
 
 const FUZZY_WORDS: { id: VoiceCommandId; variants: string[]; maxDistance: number }[] = [
-  { id: 'panel', variants: ['panel', 'panelu', 'panels'], maxDistance: 1 },
+  { id: 'panel', variants: ['panel', 'panelu'], maxDistance: 1 },
+  { id: 'rozgrzewka', variants: ['rozgrzewka', 'rozgrzewke', 'rozgrzewki'], maxDistance: 2 },
   { id: 'analiza', variants: ['analiza', 'analize', 'analizy'], maxDistance: 1 },
-  { id: 'start', variants: ['start', 'starts'], maxDistance: 1 },
-  { id: 'stop', variants: ['stop', 'stops'], maxDistance: 1 },
+  { id: 'historia', variants: ['historia', 'historie', 'historii'], maxDistance: 1 },
+  { id: 'start', variants: ['start'], maxDistance: 1 },
+  { id: 'stop', variants: ['stop'], maxDistance: 1 },
 ];
 
 export function normalizeTranscript(text: string): string {

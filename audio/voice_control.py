@@ -161,7 +161,7 @@ def _cache_key(text: str, voice_label: str) -> str:
 
 class CoachVoiceAnnouncer:
     def __init__(self) -> None:
-        self.enabled = os.getenv("VOICE_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+        self.enabled = os.getenv("VOICE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
         self.cooldown_sec = float(os.getenv("VOICE_COOLDOWN_SEC", "5"))
         self.backend = _build_backend()
         self._queue: queue.Queue[str | None] = queue.Queue()

@@ -14,6 +14,7 @@ import {
 import { clsx } from 'clsx';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { apiUrl, wsUrl } from '../config/api';
+import { supabase } from '../config/supabase';
 
 type Metrics = {
   score: number;
@@ -150,6 +151,7 @@ export default function LiveAnalysis() {
   const isPreparingVideo = metrics.source === 'file' && metrics.videoProcessingStatus === 'processing';
   const isVideoReady = metrics.source !== 'file' || metrics.videoProcessingStatus === 'ready';
   const canStartAnalysis = !isPreparingVideo && isVideoReady;
+  const canStopAnalysis = isAnalyzing || isPreparingVideo;
 
   const isAnalyzingRef = useRef(isAnalyzing);
   const canStartAnalysisRef = useRef(canStartAnalysis);
@@ -170,6 +172,9 @@ export default function LiveAnalysis() {
 
   const stopAnalysis = useCallback(() => {
     setIsAnalyzing(false);
+    fetch(apiUrl('/api/analysis/stop'), { method: 'POST' }).catch(() => {
+      setConnectionError('Nie udało się zatrzymać analizy na serwerze.');
+    });
   }, []);
 
   useEffect(() => {
@@ -182,6 +187,12 @@ export default function LiveAnalysis() {
     { name: 'Brakujące', value: 100 - score, color: '#32353c' },
   ];
 
+  async function getSessionHeaders() {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  }
+
   async function selectCamera(cameraIndex = 0) {
     setConnectionError(null);
     setSelectedVideoName(null);
@@ -189,7 +200,10 @@ export default function LiveAnalysis() {
 
     try {
       const url = `/api/source/camera?camera_index=${cameraIndex}${user ? `&user_id=${user.id}` : ''}`;
-      const response = await fetch(apiUrl(url), { method: 'POST' });
+      const response = await fetch(apiUrl(url), {
+        method: 'POST',
+        headers: await getSessionHeaders(),
+      });
       if (!response.ok) throw new Error();
       setMetrics((current) => ({
         ...current,
@@ -217,6 +231,7 @@ export default function LiveAnalysis() {
       const url = `/api/source/upload${user ? `?user_id=${user.id}` : ''}`;
       const response = await fetch(apiUrl(url), {
         method: 'POST',
+        headers: await getSessionHeaders(),
         body: formData,
       });
 
@@ -305,20 +320,20 @@ export default function LiveAnalysis() {
 
           <button
             onClick={() => {
-              if (isAnalyzing) stopAnalysis();
+              if (canStopAnalysis) stopAnalysis();
               else startAnalysis();
             }}
-            disabled={!canStartAnalysis && !isAnalyzing}
+            disabled={!canStartAnalysis && !canStopAnalysis}
             className={clsx(
               'flex items-center gap-2 px-6 py-2 rounded-full font-bold transition-all text-white',
-              isAnalyzing
+              canStopAnalysis
                 ? 'bg-error/80 hover:bg-error shadow-[0_0_15px_rgba(255,180,171,0.4)]'
                 : 'bg-primary text-surface hover:bg-primary-container neon-glow',
-              !canStartAnalysis && !isAnalyzing && 'opacity-60 cursor-not-allowed',
+              !canStartAnalysis && !canStopAnalysis && 'opacity-60 cursor-not-allowed',
             )}
           >
-            {isAnalyzing ? <StopCircle className="w-5 h-5" /> : <PlayCircle className="w-5 h-5" />}
-            {isAnalyzing ? 'Zatrzymaj analizę' : isPreparingVideo ? 'Przygotowuję...' : 'Rozpocznij'}
+            {canStopAnalysis ? <StopCircle className="w-5 h-5" /> : <PlayCircle className="w-5 h-5" />}
+            {canStopAnalysis ? 'Przerwij analizę' : 'Rozpocznij'}
           </button>
         </div>
       </header>

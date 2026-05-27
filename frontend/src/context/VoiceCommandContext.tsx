@@ -107,8 +107,14 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
       case 'panel':
         navigate('/dashboard');
         break;
+      case 'rozgrzewka':
+        navigate('/warmup');
+        break;
       case 'analiza':
         navigate('/live');
+        break;
+      case 'historia':
+        navigate('/history');
         break;
       default:
         break;
