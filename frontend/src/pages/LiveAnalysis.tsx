@@ -19,6 +19,7 @@ import { supabase } from '../config/supabase';
 type Metrics = {
   score: number;
   kneeAngle: number;
+  totalContacts: number;
   warnings: string | null;
   postureWarnings: string | null;
   contactWarning: string | null;
@@ -65,6 +66,7 @@ function resolveAnalysisLabels(
 const initialMetrics: Metrics = {
   score: 0,
   kneeAngle: 120,
+  totalContacts: 0,
   warnings: null,
   postureWarnings: null,
   contactWarning: null,
@@ -165,10 +167,24 @@ export default function LiveAnalysis() {
     canStartAnalysisRef.current = canStartAnalysis;
   }, [canStartAnalysis]);
 
-  const startAnalysis = useCallback(() => {
+  const startAnalysis = useCallback(async () => {
     if (!canStartAnalysisRef.current && !isAnalyzingRef.current) return;
+    if (metrics.source === 'camera') {
+      try {
+        const url = `/api/source/camera?camera_index=${selectedCameraIndex}${user ? `&user_id=${user.id}` : ''}`;
+        const response = await fetch(apiUrl(url), {
+          method: 'POST',
+          headers: await getSessionHeaders(),
+        });
+        if (!response.ok) throw new Error();
+        setFeedKey((current) => current + 1);
+      } catch {
+        setConnectionError(`Nie udało się wybrać kamery ${selectedCameraIndex + 1}.`);
+        return;
+      }
+    }
     setIsAnalyzing(true);
-  }, []);
+  }, [metrics.source, selectedCameraIndex, user]);
 
   const stopAnalysis = useCallback(() => {
     setIsAnalyzing(false);
@@ -419,10 +435,14 @@ export default function LiveAnalysis() {
 
           <div className="glass-card p-5 rounded-2xl border-white/10">
             <h3 className="text-sm text-on-surface-variant font-medium mb-1">Ocena odbicia</h3>
+            <div className="mb-3 rounded-lg border border-primary/20 bg-primary/10 p-3">
+              <p className="text-xs text-on-surface-variant">Licznik odbić</p>
+              <p className="text-4xl font-bold text-white">{metrics.totalContacts}</p>
+            </div>
             <div className={clsx('mt-3 rounded-lg border p-3', metrics.isContact ? 'border-primary/40 bg-primary/10' : 'border-white/10 bg-surface-variant/30')}>
               <p className="text-white font-bold">{contactFeedback}</p>
               <p className="text-xs mt-2 text-on-surface-variant">
-                {metrics.isContact ? `Wynik odbicia: ${contactScore}/100` : 'Komunikat pojawi się, gdy piłka będzie przy nadgarstkach.'}
+                {metrics.isContact ? `Wynik odbicia: ${contactScore}/100` : 'Komunikat pojawi się, gdy piłka będzie przy przedramionach.'}
               </p>
             </div>
           </div>
