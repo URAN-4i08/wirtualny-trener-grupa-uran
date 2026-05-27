@@ -48,6 +48,8 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
   const recognitionRef = useRef<ReturnType<typeof createSpeechRecognition> | null>(null);
   const voiceSocketRef = useRef<WebSocket | null>(null);
   const micCaptureRef = useRef<{ stop: () => void } | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const manualVoiceStopRef = useRef(false);
   const lastFiredAtRef = useRef<Record<string, number>>({});
   const enabledRef = useRef(false);
   const engineRef = useRef<VoiceEngine>('off');
@@ -114,6 +116,11 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   const stopVoskSession = useCallback(() => {
+    manualVoiceStopRef.current = true;
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     micCaptureRef.current?.stop();
     micCaptureRef.current = null;
     voiceSocketRef.current?.close();
@@ -129,6 +136,7 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
 
   const startVoskSession = useCallback(async () => {
     stopVoskSession();
+    manualVoiceStopRef.current = false;
     engineRef.current = 'vosk';
     setEngine('vosk');
     setError(null);
@@ -179,7 +187,17 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
     socket.onclose = () => {
       micCaptureRef.current?.stop();
       micCaptureRef.current = null;
+      if (voiceSocketRef.current === socket) {
+        voiceSocketRef.current = null;
+      }
       setIsListening(false);
+
+      if (!manualVoiceStopRef.current && enabledRef.current && engineRef.current === 'vosk') {
+        reconnectTimerRef.current = window.setTimeout(() => {
+          reconnectTimerRef.current = null;
+          void startVoskSession();
+        }, 1500);
+      }
     };
   }, [processTranscript, stopVoskSession]);
 
@@ -264,7 +282,32 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (!backendVoiceReady && !isSpeechRecognitionSupported()) {
+    let currentBackendVoiceReady = backendVoiceReady;
+    if (!currentBackendVoiceReady) {
+      try {
+        const statusResponse = await fetch(apiUrl('/api/voice/status'));
+        const status = await statusResponse.json();
+
+        if (status.ready) {
+          currentBackendVoiceReady = true;
+        } else {
+          setIsPreparing(true);
+          const prepareResponse = await fetch(apiUrl('/api/voice/prepare'), { method: 'POST' });
+          const prepareResult = await prepareResponse.json();
+          setIsPreparing(false);
+          currentBackendVoiceReady = prepareResponse.ok && Boolean(prepareResult.ready);
+        }
+
+        setBackendVoiceReady(currentBackendVoiceReady);
+      } catch {
+        currentBackendVoiceReady = false;
+        setBackendVoiceReady(false);
+      } finally {
+        setIsPreparing(false);
+      }
+    }
+
+    if (!currentBackendVoiceReady && !isSpeechRecognitionSupported()) {
       setError('Uruchom backend na porcie 8000 (server.py).');
       setIsActivating(false);
       return;
