@@ -126,7 +126,6 @@ export default function LiveAnalysis() {
       };
     }
 
-    setConnectionError(null);
     connect();
 
     return () => {
@@ -179,7 +178,7 @@ export default function LiveAnalysis() {
         if (!response.ok) throw new Error();
         setFeedKey((current) => current + 1);
       } catch {
-        setConnectionError(`Nie udało się wybrać kamery ${selectedCameraIndex + 1}.`);
+        setConnectionError(`Nie udało się uruchomić kamery ${selectedCameraIndex + 1}.`);
         return;
       }
     }
@@ -213,26 +212,18 @@ export default function LiveAnalysis() {
     setConnectionError(null);
     setSelectedVideoName(null);
     setSelectedCameraIndex(cameraIndex);
-
-    try {
-      const url = `/api/source/camera?camera_index=${cameraIndex}${user ? `&user_id=${user.id}` : ''}`;
-      const response = await fetch(apiUrl(url), {
-        method: 'POST',
-        headers: await getSessionHeaders(),
-      });
-      if (!response.ok) throw new Error();
-      setMetrics((current) => ({
-        ...current,
-        source: 'camera',
-        status: `Wybrano kamerę ${cameraIndex + 1}`,
-        videoProcessingStatus: 'idle',
-        videoProcessingProgress: 0,
-      }));
-      setFeedKey((current) => current + 1);
-      setIsAnalyzing(false);
-    } catch {
-      setConnectionError(`Nie udało się wybrać kamery ${cameraIndex + 1}.`);
+    if (isAnalyzingRef.current) {
+      fetch(apiUrl('/api/analysis/stop'), { method: 'POST' }).catch(() => undefined);
     }
+    setMetrics((current) => ({
+      ...current,
+      source: 'camera',
+      status: `Wybrano kamerę ${cameraIndex + 1}`,
+      videoProcessingStatus: 'idle',
+      videoProcessingProgress: 0,
+    }));
+    setFeedKey((current) => current + 1);
+    setIsAnalyzing(false);
   }
 
   async function uploadVideo(file: File) {

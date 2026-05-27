@@ -10,7 +10,12 @@ import requests
 from fastapi import FastAPI, File, Header, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+
+# Wymuś CPU path dla MediaPipe na macOS, żeby uniknąć crashy GL.
+os.environ.setdefault("MEDIAPIPE_DISABLE_GPU", "1")
+
 import mediapipe as mp
+from mediapipe.framework.formats import landmark_pb2
 from ultralytics import YOLO
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -18,7 +23,7 @@ from datetime import datetime
 
 # Add the root directory to path to import logic modules.
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-from logic.coach_engine import calculate_angle, check_volleyball_position
+from logic.coach_engine import calculate_angle, check_volleyball_position, VolleyballPostureEvaluator
 from audio.voice_control import get_announcer
 from audio import speech_recognition as vosk_stt
 
@@ -117,6 +122,7 @@ state_lock = threading.Lock()
 source_state = {
     "mode": "camera",
     "cameraIndex": 0,
+    "cameraIndex2": None,
     "videoPath": None,
     "videoName": None,
     "jobId": 0,
@@ -155,14 +161,107 @@ global_metrics = {
 yolo_model = YOLO(os.getenv("YOLO_MODEL_PATH", "yolov8n.pt"))
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
-pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+pose_tracker = None
 
 LIVE_STREAM_FPS = int(os.getenv("LIVE_STREAM_FPS", "20"))
 LIVE_STREAM_WIDTH = int(os.getenv("LIVE_STREAM_WIDTH", "960"))
 LIVE_ANALYSIS_WIDTH = int(os.getenv("LIVE_ANALYSIS_WIDTH", "640"))
-LIVE_POSE_EVERY_N_FRAMES = int(os.getenv("LIVE_POSE_EVERY_N_FRAMES", "3"))
-LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "6"))
+LIVE_POSE_EVERY_N_FRAMES = int(os.getenv("LIVE_POSE_EVERY_N_FRAMES", "1"))
+LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "3"))
 LIVE_NO_POSE_GRACE_FRAMES = int(os.getenv("LIVE_NO_POSE_GRACE_FRAMES", "4"))
+LIVE_POSE_HOLD_FRAMES = int(os.getenv("LIVE_POSE_HOLD_FRAMES", "10"))
+LIVE_POSE_SMOOTH_ALPHA = float(os.getenv("LIVE_POSE_SMOOTH_ALPHA", "0.35"))
+LIVE_MESSAGE_STABLE_FRAMES = int(os.getenv("LIVE_MESSAGE_STABLE_FRAMES", "6"))
+LIVE_HINT_MIN_INTERVAL_SEC = float(os.getenv("LIVE_HINT_MIN_INTERVAL_SEC", "0.8"))
+
+class PoseLandmarkStabilizer:
+    def __init__(self, alpha=0.35, hold_frames=10, min_visibility=0.35):
+        self.alpha = float(alpha)
+        self.hold_frames = int(hold_frames)
+        self.min_visibility = float(min_visibility)
+        self._last_smoothed = None
+        self._missing_streak = 0
+
+    def _blend(self, prev, curr):
+        a = self.alpha
+        out = landmark_pb2.NormalizedLandmarkList()
+        for p, c in zip(prev.landmark, curr.landmark):
+            lm = out.landmark.add()
+            lm.x = (1 - a) * p.x + a * c.x
+            lm.y = (1 - a) * p.y + a * c.y
+            lm.z = (1 - a) * p.z + a * c.z
+            lm.visibility = (1 - a) * getattr(p, "visibility", 0.0) + a * getattr(c, "visibility", 0.0)
+            if hasattr(c, "presence"):
+                lm.presence = (1 - a) * getattr(p, "presence", 0.0) + a * getattr(c, "presence", 0.0)
+        return out
+
+    def update(self, pose_landmarks):
+        """
+        Zwraca landmarki do rysowania/analizy:
+        - gdy detekcja jest -> wygładzone landmarki
+        - gdy brak detekcji -> ostatnie landmarki (przez hold_frames)
+        """
+        if pose_landmarks and pose_landmarks.landmark:
+            self._missing_streak = 0
+            curr = landmark_pb2.NormalizedLandmarkList()
+            curr.landmark.extend(pose_landmarks.landmark)
+
+            if self._last_smoothed is None or len(self._last_smoothed.landmark) != len(curr.landmark):
+                self._last_smoothed = curr
+            else:
+                self._last_smoothed = self._blend(self._last_smoothed, curr)
+            return self._last_smoothed, True
+
+        self._missing_streak += 1
+        if self._last_smoothed is not None and self._missing_streak <= self.hold_frames:
+            return self._last_smoothed, False
+        return None, False
+
+    def last_landmarks(self):
+        return self._last_smoothed
+
+
+class MessageDebouncer:
+    def __init__(self, stable_frames=6):
+        self.stable_frames = int(stable_frames)
+        self._candidate = None
+        self._count = 0
+        self._current = None
+
+    def update(self, message):
+        if message == self._current:
+            self._candidate = None
+            self._count = 0
+            return self._current
+
+        if message != self._candidate:
+            self._candidate = message
+            self._count = 1
+            return self._current
+
+        self._count += 1
+        if self._count >= self.stable_frames:
+            self._current = self._candidate
+            self._candidate = None
+            self._count = 0
+        return self._current
+
+
+live_pose_stabilizer = PoseLandmarkStabilizer(
+    alpha=LIVE_POSE_SMOOTH_ALPHA,
+    hold_frames=LIVE_POSE_HOLD_FRAMES,
+)
+live_posture_evaluator = VolleyballPostureEvaluator()
+live_posture_debouncer = MessageDebouncer(stable_frames=LIVE_MESSAGE_STABLE_FRAMES)
+live_contact_debouncer = MessageDebouncer(stable_frames=max(3, LIVE_MESSAGE_STABLE_FRAMES // 2))
+
+
+def get_pose_tracker():
+    global pose_tracker
+    if pose_tracker is not None:
+        return pose_tracker
+    pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    return pose_tracker
 
 
 def build_live_status(metrics):
@@ -477,7 +576,18 @@ def resize_to_width(frame, target_width):
     return cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
 
 
-def analyze_frame(frame, pose, detect_ball=True, source="file", contact_tracker=None, frame_index=0):
+def analyze_frame(
+    frame,
+    pose,
+    detect_ball=True,
+    source="file",
+    contact_tracker=None,
+    frame_index=0,
+    pose_stabilizer: PoseLandmarkStabilizer | None = None,
+    posture_evaluator: VolleyballPostureEvaluator | None = None,
+    posture_debouncer: MessageDebouncer | None = None,
+    contact_debouncer: MessageDebouncer | None = None,
+):
     image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
 
@@ -488,10 +598,17 @@ def analyze_frame(frame, pose, detect_ball=True, source="file", contact_tracker=
     posture_warning = "Nie wykryto sylwetki"
     contact_warning = None
     contact_score = None
+    pose_landmarks_for_use = results.pose_landmarks
+    has_pose_now = bool(results.pose_landmarks)
 
-    if results.pose_landmarks:
-        mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-        body_points = build_body_points(results.pose_landmarks.landmark)
+    if pose_stabilizer is not None:
+        stabilized_landmarks, has_pose_now = pose_stabilizer.update(results.pose_landmarks)
+        pose_landmarks_for_use = stabilized_landmarks
+
+    if pose_landmarks_for_use:
+        mp_drawing.draw_landmarks(frame, pose_landmarks_for_use, mp_pose.POSE_CONNECTIONS)
+        body_points = build_body_points(pose_landmarks_for_use.landmark)
+        draw_forearm_contact(frame, body_points, None, False)
         knee_angle = calculate_knee_angle_value(body_points)
 
     ball_positions = find_ball_positions(frame) if detect_ball else []
@@ -503,13 +620,22 @@ def analyze_frame(frame, pose, detect_ball=True, source="file", contact_tracker=
             contact_detected = is_ball_close_to_forearms(frame, body_points, ball_positions)
 
     if body_points:
-        is_correct, message, points = check_volleyball_position(body_points)
+        if posture_evaluator is not None:
+            is_correct, message, points = posture_evaluator.evaluate(body_points)
+        else:
+            is_correct, message, points = check_volleyball_position(body_points)
         score = points
         posture_warning = None if is_correct else message
+        if posture_debouncer is not None:
+            stabilized_message = posture_debouncer.update(posture_warning)
+            posture_warning = stabilized_message
 
         if contact_detected:
             contact_warning = message
             contact_score = points
+            if contact_debouncer is not None:
+                stabilized_contact = contact_debouncer.update(contact_warning)
+                contact_warning = stabilized_contact
 
     metrics = {
         "score": score,
@@ -520,7 +646,7 @@ def analyze_frame(frame, pose, detect_ball=True, source="file", contact_tracker=
         "contactWarning": contact_warning,
         "contactScore": contact_score,
         "isContact": contact_detected,
-        "hasPose": bool(body_points),
+        "hasPose": bool(pose_landmarks_for_use),
         "hasBall": bool(ball_positions),
         "source": source,
         "isAnalyzing": True,
@@ -576,6 +702,10 @@ def preprocess_uploaded_video(video_path, job_id):
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     frame_index = 0
     contact_tracker = BallContactTracker(cooldown_frames=max(10, int(fps * 0.45)))
+    pose_stabilizer = PoseLandmarkStabilizer(alpha=0.25, hold_frames=0)
+    posture_evaluator = VolleyballPostureEvaluator()
+    posture_debouncer = MessageDebouncer(stable_frames=3)
+    contact_debouncer = MessageDebouncer(stable_frames=2)
 
     with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
         while True:
@@ -599,6 +729,10 @@ def preprocess_uploaded_video(video_path, job_id):
                 pose,
                 contact_tracker=contact_tracker,
                 frame_index=frame_index,
+                pose_stabilizer=pose_stabilizer,
+                posture_evaluator=posture_evaluator,
+                posture_debouncer=posture_debouncer,
+                contact_debouncer=contact_debouncer,
             )
             frame_path = os.path.join(output_dir, f"{frame_index:06d}.jpg")
             cv2.imwrite(frame_path, analyzed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
@@ -724,11 +858,28 @@ def stream_preprocessed_frames():
 
 
 def stream_camera_frames(capture_source, current_source):
-    camera = cv2.VideoCapture(capture_source)
+    try:
+        live_pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    except Exception as error:
+        update_metrics(
+            isAnalyzing=False,
+            status=f"Nie mozna uruchomic detekcji pozy: {error}",
+            warnings="Blad inicjalizacji detekcji pozy",
+            postureWarnings="Blad inicjalizacji detekcji pozy",
+            source="camera",
+        )
+        return
+
+    if isinstance(capture_source, int) and sys.platform == "darwin":
+        camera = cv2.VideoCapture(capture_source, cv2.CAP_AVFOUNDATION)
+    else:
+        camera = cv2.VideoCapture(capture_source)
     camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, LIVE_STREAM_WIDTH)
+    camera.set(cv2.CAP_PROP_FPS, LIVE_STREAM_FPS)
 
     if not camera.isOpened():
+        live_pose_tracker.close()
         update_metrics(
             isAnalyzing=False,
             status="Nie mozna otworzyc kamery",
@@ -740,9 +891,17 @@ def stream_camera_frames(capture_source, current_source):
 
     frame_counter = 0
     target_delay = 1 / max(1, LIVE_STREAM_FPS)
+    next_due = time.time()
     last_metrics = None
     no_pose_streak = 0
     contact_tracker = BallContactTracker(cooldown_frames=max(10, int(LIVE_STREAM_FPS * 0.45)))
+    pose_stabilizer = PoseLandmarkStabilizer(alpha=LIVE_POSE_SMOOTH_ALPHA, hold_frames=LIVE_POSE_HOLD_FRAMES)
+    posture_evaluator = VolleyballPostureEvaluator()
+    posture_debouncer = MessageDebouncer(stable_frames=LIVE_MESSAGE_STABLE_FRAMES)
+    contact_debouncer = MessageDebouncer(stable_frames=max(3, LIVE_MESSAGE_STABLE_FRAMES // 2))
+    last_hint_sent_at = 0.0
+    last_posture_hint = None
+    failed_reads = 0
 
     update_metrics(
         isAnalyzing=True,
@@ -772,46 +931,85 @@ def stream_camera_frames(capture_source, current_source):
 
         success, frame = camera.read()
         if not success:
-            break
+            failed_reads += 1
+            if failed_reads >= 20:
+                break
+            time.sleep(0.03)
+            continue
+        failed_reads = 0
 
         display_frame = resize_to_width(frame, LIVE_STREAM_WIDTH)
-        should_analyze_pose = frame_counter % max(1, LIVE_POSE_EVERY_N_FRAMES) == 0
-        should_detect_ball = frame_counter % max(1, LIVE_BALL_EVERY_N_FRAMES) == 0
-
-        if should_analyze_pose:
-            analysis_frame = resize_to_width(display_frame.copy(), LIVE_ANALYSIS_WIDTH)
+        detect_ball = frame_counter % max(1, LIVE_BALL_EVERY_N_FRAMES) == 0
+        try:
             analyzed_frame, metrics = analyze_frame(
-                analysis_frame,
-                pose_tracker,
-                detect_ball=should_detect_ball,
+                display_frame,
+                live_pose_tracker,
+                detect_ball=detect_ball,
                 source="camera",
                 contact_tracker=contact_tracker,
                 frame_index=frame_counter,
+                pose_stabilizer=pose_stabilizer,
+                posture_evaluator=posture_evaluator,
+                posture_debouncer=posture_debouncer,
+                contact_debouncer=contact_debouncer,
             )
-            display_frame = resize_to_width(analyzed_frame, LIVE_STREAM_WIDTH)
-
-            metrics, no_pose_streak = stabilize_live_metrics(metrics, last_metrics, no_pose_streak)
-            last_metrics = metrics
-
+        except Exception as error:
             update_metrics(
-                **metrics,
-                status=build_live_status(metrics),
-                videoProcessingStatus="idle",
-                videoProcessingProgress=0,
+                isAnalyzing=False,
+                source="camera",
+                status=f"Blad analizy obrazu: {error}",
+                warnings="Blad analizy obrazu",
+                postureWarnings="Blad analizy obrazu",
             )
+            break
 
-            if metrics.get("hasPose"):
-                stats["sum_knee"] += metrics.get("kneeAngle", 0)
-                stats["count_pose"] += 1
-                stats["sum_score"] += metrics.get("score", 0)
-            if metrics.get("postureWarnings"):
-                stats["warnings"] += 1
-            if metrics.get("isContact"):
-                if metrics.get("contactScore") is not None:
-                    stats["sum_contact_score"] += metrics.get("contactScore", 0)
-                    stats["count_contact"] += 1
+        metrics, no_pose_streak = stabilize_live_metrics(metrics, last_metrics, no_pose_streak)
+        last_metrics = metrics
 
-        ret, buffer = cv2.imencode(".jpg", display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
+        now = time.time()
+        posture_warning = metrics.get("postureWarnings")
+        if posture_warning != last_posture_hint and (now - last_hint_sent_at) >= LIVE_HINT_MIN_INTERVAL_SEC:
+            last_posture_hint = posture_warning
+            last_hint_sent_at = now
+
+        published_metrics = {
+            **metrics,
+            "postureWarnings": last_posture_hint,
+            "warnings": last_posture_hint,
+        }
+
+        update_metrics(
+            **published_metrics,
+            status=build_live_status(published_metrics),
+            videoProcessingStatus="idle",
+            videoProcessingProgress=0,
+        )
+
+        overlay_text = last_posture_hint or ("Postawa OK" if metrics.get("hasPose") else "Ustaw sylwetke w kadrze")
+        overlay_color = (0, 220, 0) if metrics.get("hasPose") and not last_posture_hint else (0, 0, 255)
+        cv2.rectangle(analyzed_frame, (0, 0), (min(analyzed_frame.shape[1], 900), 42), (0, 0, 0), -1)
+        cv2.putText(
+            analyzed_frame,
+            f"Punkty: {metrics.get('score', 0)}/100 | {overlay_text}",
+            (12, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            overlay_color,
+            2,
+            cv2.LINE_AA,
+        )
+
+        if metrics.get("hasPose"):
+            stats["sum_knee"] += metrics.get("kneeAngle", 0)
+            stats["count_pose"] += 1
+            stats["sum_score"] += metrics.get("score", 0)
+        if published_metrics.get("postureWarnings"):
+            stats["warnings"] += 1
+        if metrics.get("isContact") and metrics.get("contactScore") is not None:
+            stats["sum_contact_score"] += metrics.get("contactScore", 0)
+            stats["count_contact"] += 1
+
+        ret, buffer = cv2.imencode(".jpg", analyzed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
         if not ret:
             continue
 
@@ -821,9 +1019,15 @@ def stream_camera_frames(capture_source, current_source):
         )
 
         frame_counter += 1
-        time.sleep(target_delay)
+        next_due += target_delay
+        sleep_for = next_due - time.time()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            next_due = time.time()
 
     camera.release()
+    live_pose_tracker.close()
     update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
 
     end_time = datetime.utcnow()
@@ -859,82 +1063,156 @@ def generate_frames():
         yield from stream_preprocessed_frames()
         return
 
+    if current_source["mode"] == "camera_dual":
+        yield from stream_dual_camera_frames(current_source)
+        return
+
     yield from stream_camera_frames(capture_source, current_source)
     return
 
-    camera = cv2.VideoCapture(capture_source)
 
-    if not camera.isOpened():
-        update_metrics(
-            isAnalyzing=False,
-            status="Nie można otworzyć źródła wideo",
-            warnings="Nie można otworzyć kamery lub pliku wideo",
-            postureWarnings="Nie można otworzyć kamery lub pliku wideo",
-            source=current_source["mode"],
-        )
+def stream_dual_camera_frames(current_source):
+    cam_a = int(current_source.get("cameraIndex") or 0)
+    cam_b = current_source.get("cameraIndex2")
+    if cam_b is None:
+        update_metrics(isAnalyzing=False, status="Brak drugiej kamery", warnings="Brak drugiej kamery", source="camera")
         return
 
-    contact_feedback_frames = 0
+    camera1 = cv2.VideoCapture(cam_a)
+    camera2 = cv2.VideoCapture(int(cam_b))
+    for cam in (camera1, camera2):
+        cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cam.set(cv2.CAP_PROP_FRAME_WIDTH, LIVE_STREAM_WIDTH)
+
+    if not camera1.isOpened() or not camera2.isOpened():
+        update_metrics(
+            isAnalyzing=False,
+            status="Nie mozna otworzyc dwoch kamer",
+            warnings="Nie mozna otworzyc dwoch kamer",
+            postureWarnings="Nie mozna otworzyc dwoch kamer",
+            source="camera",
+        )
+        camera1.release()
+        camera2.release()
+        return
+
+    frame_counter = 0
+    target_delay = 1 / max(1, LIVE_STREAM_FPS)
+    next_due = time.time()
+    last_metrics = None
+    no_pose_streak = 0
+    contact_tracker = BallContactTracker(cooldown_frames=max(10, int(LIVE_STREAM_FPS * 0.45)))
+
+    stabilizer_a = PoseLandmarkStabilizer(alpha=LIVE_POSE_SMOOTH_ALPHA, hold_frames=LIVE_POSE_HOLD_FRAMES)
+    stabilizer_b = PoseLandmarkStabilizer(alpha=LIVE_POSE_SMOOTH_ALPHA, hold_frames=LIVE_POSE_HOLD_FRAMES)
+    try:
+        live_pose_tracker = get_pose_tracker()
+    except Exception as error:
+        update_metrics(
+            isAnalyzing=False,
+            status=f"Nie mozna uruchomic detekcji pozy: {error}",
+            warnings="Blad inicjalizacji detekcji pozy",
+            postureWarnings="Blad inicjalizacji detekcji pozy",
+            source="camera",
+        )
+        camera1.release()
+        camera2.release()
+        return
+
+    update_metrics(
+        isAnalyzing=True,
+        source="camera",
+        status="Analiza z dwoch kamer w toku",
+        totalContacts=0,
+        videoProcessingStatus="idle",
+        videoProcessingProgress=0,
+    )
 
     while True:
-        success, frame = camera.read()
-        if not success:
-            if current_source["mode"] == "file":
-                camera.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                continue
+        latest_source = snapshot_source()
+        if latest_source["mode"] != "camera_dual":
             break
 
-        update_metrics(isAnalyzing=True, status="Analiza w toku", source=current_source["mode"])
+        for _ in range(2):
+            camera1.grab()
+            camera2.grab()
+        ok1, frame1 = camera1.retrieve()
+        ok2, frame2 = camera2.retrieve()
+        if not ok1 or not ok2:
+            break
 
-        image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = pose_tracker.process(image_rgb)
+        display1 = resize_to_width(frame1, LIVE_STREAM_WIDTH)
+        display2 = resize_to_width(frame2, LIVE_STREAM_WIDTH)
 
-        body_points = {}
-        contact_detected = False
+        should_analyze_pose = frame_counter % max(1, LIVE_POSE_EVERY_N_FRAMES) == 0
+        should_detect_ball = frame_counter % max(1, LIVE_BALL_EVERY_N_FRAMES) == 0
 
-        if results.pose_landmarks:
-            mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            body_points = build_body_points(results.pose_landmarks.landmark)
-            update_knee_angle(body_points)
+        metrics = None
+        if should_analyze_pose:
+            analysis1 = resize_to_width(display1.copy(), LIVE_ANALYSIS_WIDTH)
+            analysis2 = resize_to_width(display2.copy(), LIVE_ANALYSIS_WIDTH)
 
-        ball_positions = find_ball_positions(frame)
-        update_metrics(hasPose=bool(body_points), hasBall=bool(ball_positions))
-
-        if body_points and ball_positions:
-            contact_detected = is_ball_close_to_wrists(frame, body_points, ball_positions)
-
-        if body_points:
-            is_correct, message, points = check_volleyball_position(body_points)
-            posture_warning = None if is_correct else message
-            update_metrics(
-                score=points,
-                warnings=posture_warning,
-                postureWarnings=posture_warning,
-                status="Wykryto sylwetkę. Analizuję pozycję.",
+            analyzed1, m1 = analyze_frame(
+                analysis1,
+                live_pose_tracker,
+                detect_ball=should_detect_ball,
+                source="camera",
+                contact_tracker=contact_tracker,
+                frame_index=frame_counter,
+                pose_stabilizer=stabilizer_a,
+                posture_evaluator=live_posture_evaluator,
+                posture_debouncer=live_posture_debouncer,
+                contact_debouncer=live_contact_debouncer,
+            )
+            analyzed2, m2 = analyze_frame(
+                analysis2,
+                live_pose_tracker,
+                detect_ball=should_detect_ball,
+                source="camera",
+                contact_tracker=contact_tracker,
+                frame_index=frame_counter,
+                pose_stabilizer=stabilizer_b,
+                posture_evaluator=live_posture_evaluator,
+                posture_debouncer=live_posture_debouncer,
+                contact_debouncer=live_contact_debouncer,
             )
 
-            if contact_detected:
-                update_metrics(
-                    contactWarning=message,
-                    contactScore=points,
-                    isContact=True,
-                    status="Wykryto moment odbicia",
-                )
-                contact_feedback_frames = 30
-        else:
+            display1 = resize_to_width(analyzed1, LIVE_STREAM_WIDTH)
+            display2 = resize_to_width(analyzed2, LIVE_STREAM_WIDTH)
+
+            # wybierz "lepszą" kamerę do metryk: ta, która ma pose/większy score
+            if m1.get("hasPose") and not m2.get("hasPose"):
+                metrics = m1
+            elif m2.get("hasPose") and not m1.get("hasPose"):
+                metrics = m2
+            else:
+                metrics = m1 if m1.get("score", 0) >= m2.get("score", 0) else m2
+
+            metrics, no_pose_streak = stabilize_live_metrics(metrics, last_metrics, no_pose_streak)
+            last_metrics = metrics
             update_metrics(
-                warnings="Nie wykryto sylwetki",
-                postureWarnings="Nie wykryto sylwetki",
-                score=0,
-                status="Czekam na wykrycie sylwetki",
+                **metrics,
+                status=build_live_status(metrics),
+                videoProcessingStatus="idle",
+                videoProcessingProgress=0,
             )
-
-        if contact_feedback_frames > 0:
-            contact_feedback_frames -= 1
         else:
-            update_metrics(contactWarning=None, contactScore=None, isContact=False)
+            la = stabilizer_a.last_landmarks()
+            lb = stabilizer_b.last_landmarks()
+            if la is not None:
+                mp_drawing.draw_landmarks(display1, la, mp_pose.POSE_CONNECTIONS)
+            if lb is not None:
+                mp_drawing.draw_landmarks(display2, lb, mp_pose.POSE_CONNECTIONS)
 
-        ret, buffer = cv2.imencode(".jpg", frame)
+        h = min(display1.shape[0], display2.shape[0])
+        if display1.shape[0] != h:
+            display1 = cv2.resize(display1, (display1.shape[1], h), interpolation=cv2.INTER_AREA)
+        if display2.shape[0] != h:
+            display2 = cv2.resize(display2, (display2.shape[1], h), interpolation=cv2.INTER_AREA)
+
+        combined = cv2.hconcat([display1, display2])
+
+        ret, buffer = cv2.imencode(".jpg", combined, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
         if not ret:
             continue
 
@@ -943,30 +1221,17 @@ def generate_frames():
             b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
         )
 
-    camera.release()
-    update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
+        frame_counter += 1
+        next_due += target_delay
+        sleep_for = next_due - time.time()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            next_due = time.time()
 
-    end_time = datetime.utcnow()
-    
-    if stats["count_pose"] > 0:
-        final_stats = {
-            'total_contacts': stats["contacts"],
-            'avg_knee_angle': stats["sum_knee"] // stats["count_pose"],
-            'posture_warnings_count': stats["warnings"],
-            'avg_contact_score': stats["sum_contact_score"] // stats["count_contact"] if stats["count_contact"] else 0,
-            'overall_score': stats["sum_score"] // stats["count_pose"]
-        }
-        
-        current_src = snapshot_source()
-        if current_src.get("userId"):
-            save_training_session(
-                current_src["userId"],
-                "camera",
-                start_time,
-                end_time,
-                final_stats,
-                current_src.get("accessToken"),
-            )
+    camera1.release()
+    camera2.release()
+    update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
 
 
 @app.get("/api/source")
@@ -988,6 +1253,7 @@ def set_camera_source(camera_index: int = 0, user_id: str = None, authorization:
             {
                 "mode": "camera",
                 "cameraIndex": camera_index,
+                "cameraIndex2": None,
                 "videoPath": None,
                 "videoName": None,
                 "jobId": source_state["jobId"] + 1,
@@ -1016,6 +1282,50 @@ def set_camera_source(camera_index: int = 0, user_id: str = None, authorization:
         videoProcessingProgress=0,
     )
     return {"ok": True, "source": "camera", "cameraIndex": camera_index}
+
+
+@app.post("/api/source/camera-dual")
+def set_dual_camera_source(
+    camera_index_a: int = 0,
+    camera_index_b: int = 1,
+    user_id: str = None,
+    authorization: str | None = Header(default=None),
+):
+    access_token = authorization.removeprefix("Bearer ").strip() if authorization else None
+    with state_lock:
+        source_state.update(
+            {
+                "mode": "camera_dual",
+                "cameraIndex": camera_index_a,
+                "cameraIndex2": camera_index_b,
+                "videoPath": None,
+                "videoName": None,
+                "jobId": source_state["jobId"] + 1,
+                "userId": user_id,
+                "accessToken": access_token,
+            }
+        )
+        preprocessed_state.update(
+            {
+                "status": "idle",
+                "progress": 0,
+                "framePaths": [],
+                "metrics": [],
+                "error": None,
+            }
+        )
+
+    update_metrics(
+        source="camera",
+        status=f"Wybrano dwie kamery: {camera_index_a} i {camera_index_b}",
+        totalContacts=0,
+        contactWarning=None,
+        contactScore=None,
+        isContact=False,
+        videoProcessingStatus="idle",
+        videoProcessingProgress=0,
+    )
+    return {"ok": True, "source": "camera_dual", "cameraIndex": camera_index_a, "cameraIndex2": camera_index_b}
 
 
 @app.post("/api/source/upload")
