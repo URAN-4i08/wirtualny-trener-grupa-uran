@@ -111,7 +111,7 @@ global_metrics = {
     "videoProcessingProgress": 0,
 }
 
-yolo_model = YOLO(os.getenv("YOLO_MODEL_PATH", "yolov8s.pt"))
+yolo_model = YOLO(os.getenv("YOLO_MODEL_PATH", "yolov8n.pt"))
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)

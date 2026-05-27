@@ -13,6 +13,7 @@ WORKDIR /app
 
 # Skopiowanie pliku wymagań i ich instalacja
 COPY requirements.txt .
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Skopiowanie reszty kodu (frontend nie jest potrzebny, ale model YOLO i katalogi tak)
