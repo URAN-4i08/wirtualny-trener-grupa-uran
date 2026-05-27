@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceCommands } from '../context/VoiceCommandContext';
+import { useAuth } from '../context/AuthContext';
 import {
   AlertTriangle,
   Camera,
@@ -78,6 +79,7 @@ const initialMetrics: Metrics = {
 };
 
 export default function LiveAnalysis() {
+  const { user } = useAuth();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [metrics, setMetrics] = useState<Metrics>(initialMetrics);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -186,7 +188,8 @@ export default function LiveAnalysis() {
     setSelectedCameraIndex(cameraIndex);
 
     try {
-      const response = await fetch(apiUrl(`/api/source/camera?camera_index=${cameraIndex}`), { method: 'POST' });
+      const url = `/api/source/camera?camera_index=${cameraIndex}${user ? `&user_id=${user.id}` : ''}`;
+      const response = await fetch(apiUrl(url), { method: 'POST' });
       if (!response.ok) throw new Error();
       setMetrics((current) => ({
         ...current,
@@ -211,7 +214,8 @@ export default function LiveAnalysis() {
     formData.append('file', file);
 
     try {
-      const response = await fetch(apiUrl('/api/source/upload'), {
+      const url = `/api/source/upload${user ? `?user_id=${user.id}` : ''}`;
+      const response = await fetch(apiUrl(url), {
         method: 'POST',
         body: formData,
       });

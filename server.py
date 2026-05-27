@@ -11,6 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import mediapipe as mp
 from ultralytics import YOLO
+from dotenv import load_dotenv
+from supabase import create_client, Client
+from datetime import datetime
 
 # Add the root directory to path to import logic modules.
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
@@ -33,6 +36,43 @@ CACHE_DIR = os.path.join(UPLOAD_DIR, "processed")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+load_dotenv(os.path.join(os.path.dirname(__file__), "frontend", ".env"))
+SUPABASE_URL = os.getenv("VITE_SUPABASE_URL")
+SUPABASE_KEY = os.getenv("VITE_SUPABASE_ANON_KEY")
+supabase_client: Client | None = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("Pomyślnie zainicjalizowano Supabase w backendzie.")
+    except Exception as e:
+        print(f"Błąd inicjalizacji Supabase: {e}")
+
+def save_training_session(user_id, source, start_time, end_time, stats):
+    if not supabase_client or not user_id:
+        return
+    try:
+        training_res = supabase_client.table('trainings').insert({
+            'user_id': user_id,
+            'start_time': start_time.isoformat(),
+            'end_time': end_time.isoformat(),
+            'source': source,
+            'overall_score': stats.get('overall_score', 0),
+            'status': 'completed'
+        }).execute()
+        
+        training_id = training_res.data[0]['id']
+        
+        supabase_client.table('training_stats').insert({
+            'training_id': training_id,
+            'total_contacts': stats.get('total_contacts', 0),
+            'avg_knee_angle': stats.get('avg_knee_angle', 0),
+            'posture_warnings_count': stats.get('posture_warnings_count', 0),
+            'avg_contact_score': stats.get('avg_contact_score', 0)
+        }).execute()
+        print(f"Zapisano trening dla użytkownika {user_id}")
+    except Exception as e:
+        print(f"Błąd zapisu do Supabase: {e}")
+
 state_lock = threading.Lock()
 
 source_state = {
@@ -41,6 +81,7 @@ source_state = {
     "videoPath": None,
     "videoName": None,
     "jobId": 0,
+    "userId": None,
 }
 
 preprocessed_state = {
@@ -337,6 +378,8 @@ def preprocess_uploaded_video(video_path, job_id):
         source="file",
     )
 
+    start_time = datetime.utcnow()
+
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         with state_lock:
@@ -411,6 +454,31 @@ def preprocess_uploaded_video(video_path, job_id):
         isAnalyzing=False,
     )
 
+    end_time = datetime.utcnow()
+    # Obliczanie statystyk
+    total_contacts = sum(1 for m in frame_metrics if m.get("isContact"))
+    angles = [m.get("kneeAngle", 0) for m in frame_metrics if m.get("hasPose")]
+    avg_knee_angle = sum(angles) // len(angles) if angles else 0
+    warnings_count = sum(1 for m in frame_metrics if m.get("postureWarnings"))
+    contact_scores = [m.get("contactScore", 0) for m in frame_metrics if m.get("contactScore") is not None]
+    avg_contact_score = sum(contact_scores) // len(contact_scores) if contact_scores else 0
+    
+    # Obliczamy score dla całego treningu (bazując na średniej)
+    all_scores = [m.get("score", 0) for m in frame_metrics if m.get("hasPose")]
+    overall_score = sum(all_scores) // len(all_scores) if all_scores else 0
+    
+    stats = {
+        'total_contacts': total_contacts,
+        'avg_knee_angle': avg_knee_angle,
+        'posture_warnings_count': warnings_count,
+        'avg_contact_score': avg_contact_score,
+        'overall_score': overall_score
+    }
+    
+    current_source = snapshot_source()
+    if current_source.get("userId"):
+        save_training_session(current_source["userId"], "file", start_time, end_time, stats)
+
 
 def stream_preprocessed_frames():
     cached = snapshot_preprocessed()
@@ -482,6 +550,18 @@ def stream_camera_frames(capture_source, current_source):
         videoProcessingProgress=0,
     )
 
+    start_time = datetime.utcnow()
+    
+    stats = {
+        "contacts": 0,
+        "warnings": 0,
+        "sum_knee": 0,
+        "count_pose": 0,
+        "sum_contact_score": 0,
+        "sum_score": 0,
+        "count_contact": 0
+    }
+
     while True:
         latest_source = snapshot_source()
         if latest_source["mode"] != "camera" or latest_source["cameraIndex"] != current_source["cameraIndex"]:
@@ -515,6 +595,18 @@ def stream_camera_frames(capture_source, current_source):
                 videoProcessingProgress=0,
             )
 
+            if metrics.get("hasPose"):
+                stats["sum_knee"] += metrics.get("kneeAngle", 0)
+                stats["count_pose"] += 1
+                stats["sum_score"] += metrics.get("score", 0)
+            if metrics.get("postureWarnings"):
+                stats["warnings"] += 1
+            if metrics.get("isContact"):
+                stats["contacts"] += 1
+                if metrics.get("contactScore") is not None:
+                    stats["sum_contact_score"] += metrics.get("contactScore", 0)
+                    stats["count_contact"] += 1
+
         ret, buffer = cv2.imencode(".jpg", display_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
         if not ret:
             continue
@@ -529,6 +621,21 @@ def stream_camera_frames(capture_source, current_source):
 
     camera.release()
     update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
+
+    end_time = datetime.utcnow()
+    
+    if stats["count_pose"] > 0:
+        final_stats = {
+            'total_contacts': stats["contacts"],
+            'avg_knee_angle': stats["sum_knee"] // stats["count_pose"],
+            'posture_warnings_count': stats["warnings"],
+            'avg_contact_score': stats["sum_contact_score"] // stats["count_contact"] if stats["count_contact"] else 0,
+            'overall_score': stats["sum_score"] // stats["count_pose"]
+        }
+        
+        current_src = snapshot_source()
+        if current_src.get("userId"):
+            save_training_session(current_src["userId"], "camera", start_time, end_time, final_stats)
 
 
 def generate_frames():
@@ -624,6 +731,21 @@ def generate_frames():
     camera.release()
     update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
 
+    end_time = datetime.utcnow()
+    
+    if stats["count_pose"] > 0:
+        final_stats = {
+            'total_contacts': stats["contacts"],
+            'avg_knee_angle': stats["sum_knee"] // stats["count_pose"],
+            'posture_warnings_count': stats["warnings"],
+            'avg_contact_score': stats["sum_contact_score"] // stats["count_contact"] if stats["count_contact"] else 0,
+            'overall_score': stats["sum_score"] // stats["count_pose"]
+        }
+        
+        current_src = snapshot_source()
+        if current_src.get("userId"):
+            save_training_session(current_src["userId"], "camera", start_time, end_time, final_stats)
+
 
 @app.get("/api/source")
 def get_source():
@@ -631,7 +753,7 @@ def get_source():
 
 
 @app.post("/api/source/camera")
-def set_camera_source(camera_index: int = 0):
+def set_camera_source(camera_index: int = 0, user_id: str = None):
     with state_lock:
         source_state.update(
             {
@@ -640,6 +762,7 @@ def set_camera_source(camera_index: int = 0):
                 "videoPath": None,
                 "videoName": None,
                 "jobId": source_state["jobId"] + 1,
+                "userId": user_id,
             }
         )
         preprocessed_state.update(
@@ -665,7 +788,7 @@ def set_camera_source(camera_index: int = 0):
 
 
 @app.post("/api/source/upload")
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(file: UploadFile = File(...), user_id: str = None):
     allowed_extensions = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
     _, extension = os.path.splitext(file.filename or "")
     extension = extension.lower()
@@ -691,6 +814,7 @@ async def upload_video(file: UploadFile = File(...)):
                 "videoPath": target_path,
                 "videoName": file.filename,
                 "jobId": job_id,
+                "userId": user_id,
             }
         )
 

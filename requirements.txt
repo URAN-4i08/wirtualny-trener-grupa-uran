@@ -11,3 +11,5 @@ fastapi
 uvicorn
 websockets
 python-multipart
+supabase
+python-dotenv
