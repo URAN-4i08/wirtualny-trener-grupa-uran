@@ -3,6 +3,7 @@ import { LayoutDashboard, Video, History as HistoryIcon, Dumbbell, Mic, MicOff, 
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useVoiceCommands, VOICE_COMMAND_LABELS } from '../context/VoiceCommandContext';
+import { useAuth } from '../context/AuthContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -15,6 +16,7 @@ const navItems = [
 ];
 
 export default function Sidebar() {
+  const { user, signOut } = useAuth();
   const {
     isSupported,
     isListening,
@@ -145,9 +147,21 @@ export default function Sidebar() {
 
         <div className="bg-surface-variant/50 rounded-xl p-4 border border-white/5 text-sm">
           <p className="text-on-surface-variant mb-2">System Status</p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-4">
             <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
             <span className="text-green-400 font-medium text-xs">Operational</span>
+          </div>
+          
+          <div className="pt-4 border-t border-white/10">
+            <p className="text-xs text-on-surface-variant truncate mb-2">
+              Konto: <span className="text-white">{user?.email}</span>
+            </p>
+            <button 
+              onClick={signOut}
+              className="w-full text-left text-xs text-red-400 hover:text-red-300 transition-colors"
+            >
+              Wyloguj się
+            </button>
           </div>
         </div>
       </div>
