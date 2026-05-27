@@ -13,3 +13,4 @@ websockets
 python-multipart
 supabase
 python-dotenv
+requests

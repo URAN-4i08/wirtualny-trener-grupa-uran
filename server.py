@@ -137,6 +137,7 @@ preprocessed_state = {
 global_metrics = {
     "score": 0,
     "kneeAngle": 120,
+    "totalContacts": 0,
     "warnings": None,
     "postureWarnings": None,
     "contactWarning": None,
@@ -191,6 +192,7 @@ def stabilize_live_metrics(current, previous, no_pose_streak):
         "warnings",
         "score",
         "kneeAngle",
+        "totalContacts",
         "hasPose",
         "hasBall",
         "contactWarning",
@@ -258,7 +260,6 @@ def stop_current_analysis(status="Analiza przerwana"):
                 "videoPath": None,
                 "videoName": None,
                 "jobId": source_state["jobId"] + 1,
-                "accessToken": None,
             }
         )
         preprocessed_state.update(
@@ -353,6 +354,106 @@ def find_ball_positions(frame):
     return ball_positions
 
 
+def point_to_segment_distance(point, start, end):
+    px, py = point
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    length_squared = dx * dx + dy * dy
+
+    if length_squared == 0:
+        return ((px - sx) ** 2 + (py - sy) ** 2) ** 0.5
+
+    t = max(0, min(1, ((px - sx) * dx + (py - sy) * dy) / length_squared))
+    closest_x = sx + t * dx
+    closest_y = sy + t * dy
+    return ((px - closest_x) ** 2 + (py - closest_y) ** 2) ** 0.5
+
+
+def body_point_to_pixel(frame, point):
+    return int(point.x * frame.shape[1]), int(point.y * frame.shape[0])
+
+
+def forearm_segments(frame, body_points):
+    return [
+        (
+            body_point_to_pixel(frame, body_points["lewy_lokiec"]),
+            body_point_to_pixel(frame, body_points["lewy_nadgarstek"]),
+        ),
+        (
+            body_point_to_pixel(frame, body_points["prawy_lokiec"]),
+            body_point_to_pixel(frame, body_points["prawy_nadgarstek"]),
+        ),
+    ]
+
+
+def nearest_ball_to_forearms(frame, body_points, ball_positions):
+    if not body_points or not ball_positions:
+        return None, None
+
+    segments = forearm_segments(frame, body_points)
+    nearest_ball = None
+    nearest_distance = None
+
+    for ball_center in ball_positions:
+        distance = min(point_to_segment_distance(ball_center, start, end) for start, end in segments)
+        if nearest_distance is None or distance < nearest_distance:
+            nearest_distance = distance
+            nearest_ball = ball_center
+
+    return nearest_ball, nearest_distance
+
+
+def draw_forearm_contact(frame, body_points, ball_center, is_contact=False):
+    color = (0, 255, 255) if is_contact else (180, 180, 180)
+    for start, end in forearm_segments(frame, body_points):
+        cv2.line(frame, start, end, color, 2)
+    if ball_center:
+        cv2.circle(frame, ball_center, 8, color, 2)
+
+
+def is_ball_close_to_forearms(frame, body_points, ball_positions):
+    ball_center, distance = nearest_ball_to_forearms(frame, body_points, ball_positions)
+    if ball_center is None or distance is None:
+        return False
+
+    threshold = max(55, min(frame.shape[:2]) * 0.11)
+    is_close = distance <= threshold
+    draw_forearm_contact(frame, body_points, ball_center, is_close)
+    return is_close
+
+
+class BallContactTracker:
+    def __init__(self, cooldown_frames=14):
+        self.cooldown_frames = cooldown_frames
+        self.contact_count = 0
+        self.last_contact_frame = -10_000
+        self.was_near_forearms = False
+        self.last_ball_center = None
+
+    def update(self, frame, body_points, ball_positions, frame_index):
+        ball_center, distance = nearest_ball_to_forearms(frame, body_points, ball_positions)
+        if ball_center is None or distance is None:
+            self.was_near_forearms = False
+            self.last_ball_center = None
+            return False
+
+        threshold = max(55, min(frame.shape[:2]) * 0.11)
+        is_near = distance <= threshold
+        enough_cooldown = frame_index - self.last_contact_frame >= self.cooldown_frames
+        is_new_contact = is_near and not self.was_near_forearms and enough_cooldown
+
+        if is_new_contact:
+            self.contact_count += 1
+            self.last_contact_frame = frame_index
+
+        self.was_near_forearms = is_near
+        self.last_ball_center = ball_center
+        draw_forearm_contact(frame, body_points, ball_center, is_near)
+        return is_new_contact
+
+
 def is_ball_close_to_wrists(frame, body_points, ball_positions):
     for ball_center in ball_positions:
         for side in ["lewy_nadgarstek", "prawy_nadgarstek"]:
@@ -376,7 +477,7 @@ def resize_to_width(frame, target_width):
     return cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
 
 
-def analyze_frame(frame, pose, detect_ball=True, source="file"):
+def analyze_frame(frame, pose, detect_ball=True, source="file", contact_tracker=None, frame_index=0):
     image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
 
@@ -396,7 +497,10 @@ def analyze_frame(frame, pose, detect_ball=True, source="file"):
     ball_positions = find_ball_positions(frame) if detect_ball else []
 
     if body_points and ball_positions:
-        contact_detected = is_ball_close_to_wrists(frame, body_points, ball_positions)
+        if contact_tracker:
+            contact_detected = contact_tracker.update(frame, body_points, ball_positions, frame_index)
+        else:
+            contact_detected = is_ball_close_to_forearms(frame, body_points, ball_positions)
 
     if body_points:
         is_correct, message, points = check_volleyball_position(body_points)
@@ -410,6 +514,7 @@ def analyze_frame(frame, pose, detect_ball=True, source="file"):
     metrics = {
         "score": score,
         "kneeAngle": knee_angle,
+        "totalContacts": contact_tracker.contact_count if contact_tracker else (1 if contact_detected else 0),
         "warnings": posture_warning,
         "postureWarnings": posture_warning,
         "contactWarning": contact_warning,
@@ -448,6 +553,7 @@ def preprocess_uploaded_video(video_path, job_id):
     update_metrics(
         videoProcessingStatus="processing",
         videoProcessingProgress=0,
+        totalContacts=0,
         status="Przygotowuję analizę wideo w tle...",
         isAnalyzing=False,
         source="file",
@@ -469,6 +575,7 @@ def preprocess_uploaded_video(video_path, job_id):
     fps = capture.get(cv2.CAP_PROP_FPS) or 25
     total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     frame_index = 0
+    contact_tracker = BallContactTracker(cooldown_frames=max(10, int(fps * 0.45)))
 
     with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
         while True:
@@ -487,7 +594,12 @@ def preprocess_uploaded_video(video_path, job_id):
             if not success:
                 break
 
-            analyzed_frame, metrics = analyze_frame(frame, pose)
+            analyzed_frame, metrics = analyze_frame(
+                frame,
+                pose,
+                contact_tracker=contact_tracker,
+                frame_index=frame_index,
+            )
             frame_path = os.path.join(output_dir, f"{frame_index:06d}.jpg")
             cv2.imwrite(frame_path, analyzed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
             frame_paths.append(frame_path)
@@ -531,13 +643,14 @@ def preprocess_uploaded_video(video_path, job_id):
     update_metrics(
         videoProcessingStatus="ready",
         videoProcessingProgress=100,
+        totalContacts=contact_tracker.contact_count,
         status="Wideo gotowe do płynnego odtworzenia",
         isAnalyzing=False,
     )
 
     end_time = datetime.utcnow()
     # Obliczanie statystyk
-    total_contacts = sum(1 for m in frame_metrics if m.get("isContact"))
+    total_contacts = contact_tracker.contact_count
     angles = [m.get("kneeAngle", 0) for m in frame_metrics if m.get("hasPose")]
     avg_knee_angle = sum(angles) // len(angles) if angles else 0
     warnings_count = sum(1 for m in frame_metrics if m.get("postureWarnings"))
@@ -629,11 +742,13 @@ def stream_camera_frames(capture_source, current_source):
     target_delay = 1 / max(1, LIVE_STREAM_FPS)
     last_metrics = None
     no_pose_streak = 0
+    contact_tracker = BallContactTracker(cooldown_frames=max(10, int(LIVE_STREAM_FPS * 0.45)))
 
     update_metrics(
         isAnalyzing=True,
         source="camera",
         status="Analiza kamery w toku",
+        totalContacts=0,
         videoProcessingStatus="idle",
         videoProcessingProgress=0,
     )
@@ -670,6 +785,8 @@ def stream_camera_frames(capture_source, current_source):
                 pose_tracker,
                 detect_ball=should_detect_ball,
                 source="camera",
+                contact_tracker=contact_tracker,
+                frame_index=frame_counter,
             )
             display_frame = resize_to_width(analyzed_frame, LIVE_STREAM_WIDTH)
 
@@ -690,7 +807,6 @@ def stream_camera_frames(capture_source, current_source):
             if metrics.get("postureWarnings"):
                 stats["warnings"] += 1
             if metrics.get("isContact"):
-                stats["contacts"] += 1
                 if metrics.get("contactScore") is not None:
                     stats["sum_contact_score"] += metrics.get("contactScore", 0)
                     stats["count_contact"] += 1
@@ -714,7 +830,7 @@ def stream_camera_frames(capture_source, current_source):
     
     if stats["count_pose"] > 0:
         final_stats = {
-            'total_contacts': stats["contacts"],
+            'total_contacts': contact_tracker.contact_count,
             'avg_knee_angle': stats["sum_knee"] // stats["count_pose"],
             'posture_warnings_count': stats["warnings"],
             'avg_contact_score': stats["sum_contact_score"] // stats["count_contact"] if stats["count_contact"] else 0,
@@ -892,6 +1008,7 @@ def set_camera_source(camera_index: int = 0, user_id: str = None, authorization:
     update_metrics(
         source="camera",
         status="Wybrano kamerę",
+        totalContacts=0,
         contactWarning=None,
         contactScore=None,
         isContact=False,
@@ -941,6 +1058,7 @@ async def upload_video(
     update_metrics(
         source="file",
         status=f"Wgrano plik: {file.filename}. Przygotowuję analizę...",
+        totalContacts=0,
         contactWarning=None,
         contactScore=None,
         isContact=False,
