@@ -24,6 +24,12 @@ from datetime import datetime
 # Add the root directory to path to import logic modules.
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 from logic.coach_engine import calculate_angle, check_volleyball_position, VolleyballPostureEvaluator
+from logic.biomechanics import (
+    analizuj_front,
+    analizuj_bok,
+    fuzja_sensorow,
+    WristTrajectoryTracker,
+)
 from audio.voice_control import get_announcer
 from audio import speech_recognition as vosk_stt
 
@@ -128,6 +134,8 @@ source_state = {
     "jobId": 0,
     "userId": None,
     "accessToken": None,
+    # Tryb kamery: "front" (kamera frontowa), "side" (kamera boczna), "dual" (obie)
+    "cameraMode": "front",
 }
 
 preprocessed_state = {
@@ -156,6 +164,18 @@ global_metrics = {
     "isAnalyzing": False,
     "videoProcessingStatus": "idle",
     "videoProcessingProgress": 0,
+    # ── Pola biomechaniczne (nowe) ────────────────────────────────────────────
+    # Aktualizowane przez analizuj_front / analizuj_bok / fuzja_sensorow
+    "cameraMode": "front",          # "front" / "side" / "dual"
+    "fuzjaOcena": 0,                # wynik fuzji 0-100 → ProgressBar
+    "komunikatFuzji": None,         # komunikat tekstowy → pole GUI
+    "brakPracyNog": False,          # alert krytyczny → czerwone pole GUI
+    "typOdbicia": None,             # "DOLNE" / "GORNE" / None → etykieta GUI
+    "komunikatKolana": None,        # komunikat boczny → pole GUI
+    "katBiodra": None,              # kąt biodrowy (stopnie)
+    "dystansPilkaRece": None,       # odległość piłki od rąk (px)
+    "zamachWykryty": False,         # czy wykryto zamach
+    "dynamikaZamachu": None,        # opis dynamiki zamachu
 }
 
 yolo_model = YOLO(os.getenv("YOLO_MODEL_PATH", "yolov8n.pt"))
@@ -167,12 +187,15 @@ LIVE_STREAM_FPS = int(os.getenv("LIVE_STREAM_FPS", "20"))
 LIVE_STREAM_WIDTH = int(os.getenv("LIVE_STREAM_WIDTH", "960"))
 LIVE_ANALYSIS_WIDTH = int(os.getenv("LIVE_ANALYSIS_WIDTH", "640"))
 LIVE_POSE_EVERY_N_FRAMES = int(os.getenv("LIVE_POSE_EVERY_N_FRAMES", "1"))
-LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "3"))
+# Piłkę wykrywamy CO KLATKĘ — jest szybka, nie można jej przegapić
+LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "1"))
 LIVE_NO_POSE_GRACE_FRAMES = int(os.getenv("LIVE_NO_POSE_GRACE_FRAMES", "4"))
 LIVE_POSE_HOLD_FRAMES = int(os.getenv("LIVE_POSE_HOLD_FRAMES", "10"))
 LIVE_POSE_SMOOTH_ALPHA = float(os.getenv("LIVE_POSE_SMOOTH_ALPHA", "0.35"))
-LIVE_MESSAGE_STABLE_FRAMES = int(os.getenv("LIVE_MESSAGE_STABLE_FRAMES", "6"))
-LIVE_HINT_MIN_INTERVAL_SEC = float(os.getenv("LIVE_HINT_MIN_INTERVAL_SEC", "0.8"))
+LIVE_MESSAGE_STABLE_FRAMES = int(os.getenv("LIVE_MESSAGE_STABLE_FRAMES", "8")) # ok. 0.4s stabilności - szybsza reakcja, ale wciąż bez migotania
+LIVE_HINT_MIN_INTERVAL_SEC = float(os.getenv("LIVE_HINT_MIN_INTERVAL_SEC", "1.5")) # min. 1.5 sekundy między komunikatami - naturalniejsze tempo
+# Ile klatek utrzymujemy stan "isContact" w GUI po wykryciu odbicia
+LIVE_CONTACT_HOLD_FRAMES = int(os.getenv("LIVE_CONTACT_HOLD_FRAMES", "40"))
 
 class PoseLandmarkStabilizer:
     def __init__(self, alpha=0.35, hold_frames=10, min_visibility=0.35):
@@ -304,6 +327,8 @@ def stabilize_live_metrics(current, previous, no_pose_streak):
 
 
 def update_metrics(**kwargs):
+    kwargs.pop("_bodyPoints", None)
+    kwargs.pop("_ballCenters", None)
     with state_lock:
         old_posture = global_metrics.get("postureWarnings")
         old_contact = global_metrics.get("contactWarning")
@@ -400,6 +425,9 @@ def build_body_points(landmarks):
         "prawe_kolano": landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value],
         "lewa_kostka": landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value],
         "prawa_kostka": landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE.value],
+        # Punkty dodatkowe dla biomechanics.py (analizuj_front — detekcja odbicia górnego)
+        "lewe_oko": landmarks[mp_pose.PoseLandmark.LEFT_EYE.value],
+        "prawe_oko": landmarks[mp_pose.PoseLandmark.RIGHT_EYE.value],
     }
 
 
@@ -432,7 +460,13 @@ def calculate_knee_angle_value(body_points):
 
 
 def find_ball_positions(frame):
-    results_yolo = yolo_model(frame, conf=0.4, verbose=False)
+    """
+    Wykrywa piłkę przez YOLO i rysuje czysty bbox na klatce.
+    NIE rysuje tekstu na klatce — etykieta trafi do HUD GUI przez WebSocket.
+    Zwraca listę (cx, cy) środków.
+    """
+    # conf=0.25: niższy próg = więcej detekcji, mniej missów w ruchu
+    results_yolo = yolo_model(frame, conf=0.25, verbose=False)
     ball_positions = []
 
     for result in results_yolo:
@@ -443,14 +477,21 @@ def find_ball_positions(frame):
 
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             area = (x2 - x1) * (y2 - y1)
-            if area <= 200:
+            # Zmniejszony minimalny obszar (80 px²) — piłka w ruchu może być mała
+            if area <= 80:
                 continue
 
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-            cv2.putText(frame, "Pilka", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-            ball_positions.append(((x1 + x2) // 2, (y1 + y2) // 2))
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+            # Czysty, subtelny bbox — tylko ramka i wypełniony środek
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
+            # Mały środek piłki — białe koło
+            cv2.circle(frame, (cx, cy), 5, (255, 255, 255), -1)
+
+            ball_positions.append((cx, cy))
 
     return ball_positions
+
 
 
 def point_to_segment_distance(point, start, end):
@@ -505,11 +546,21 @@ def nearest_ball_to_forearms(frame, body_points, ball_positions):
 
 
 def draw_forearm_contact(frame, body_points, ball_center, is_contact=False):
-    color = (0, 255, 255) if is_contact else (180, 180, 180)
+    """
+    Rysuje linie przedramion.
+    Podczas kontaktu z piłką — żółty akcent, bez kontaktu — prawie niewidoczne.
+    """
+    if is_contact:
+        color = (0, 230, 255)  # żółty akcent przy odbiciu
+        thickness = 3
+    else:
+        color = (80, 80, 80)   # ciemny szary — subtelny, nie przeszkadza
+        thickness = 1
     for start, end in forearm_segments(frame, body_points):
-        cv2.line(frame, start, end, color, 2)
-    if ball_center:
-        cv2.circle(frame, ball_center, 8, color, 2)
+        cv2.line(frame, start, end, color, thickness)
+    if ball_center and is_contact:
+        cv2.circle(frame, ball_center, 10, (0, 230, 255), 2)
+
 
 
 def is_ball_close_to_forearms(frame, body_points, ball_positions):
@@ -517,7 +568,8 @@ def is_ball_close_to_forearms(frame, body_points, ball_positions):
     if ball_center is None or distance is None:
         return False
 
-    threshold = max(55, min(frame.shape[:2]) * 0.11)
+    # Zwiększony próg: 15% krótszego wymiaru klatki (było 11%)
+    threshold = max(80, min(frame.shape[:2]) * 0.15)
     is_close = distance <= threshold
     draw_forearm_contact(frame, body_points, ball_center, is_close)
     return is_close
@@ -530,15 +582,24 @@ class BallContactTracker:
         self.last_contact_frame = -10_000
         self.was_near_forearms = False
         self.last_ball_center = None
+        # Ile klatek utrzymujemy flagę is_contact=True po wykryciu odbicia
+        self.contact_hold_remaining = 0
 
     def update(self, frame, body_points, ball_positions, frame_index):
         ball_center, distance = nearest_ball_to_forearms(frame, body_points, ball_positions)
+
+        # Zmniejszamy licznik podtrzymania kontaktu
+        if self.contact_hold_remaining > 0:
+            self.contact_hold_remaining -= 1
+
         if ball_center is None or distance is None:
             self.was_near_forearms = False
             self.last_ball_center = None
-            return False
+            # Jeśli jesteśmy w oknie podtrzymania — nadal raportuj kontakt
+            return self.contact_hold_remaining > 0
 
-        threshold = max(55, min(frame.shape[:2]) * 0.11)
+        # Zwiększony próg kontaktu: 15% krótszego wymiaru klatki
+        threshold = max(80, min(frame.shape[:2]) * 0.15)
         is_near = distance <= threshold
         enough_cooldown = frame_index - self.last_contact_frame >= self.cooldown_frames
         is_new_contact = is_near and not self.was_near_forearms and enough_cooldown
@@ -546,11 +607,14 @@ class BallContactTracker:
         if is_new_contact:
             self.contact_count += 1
             self.last_contact_frame = frame_index
+            # Ustaw okno podtrzymania kontaktu
+            self.contact_hold_remaining = LIVE_CONTACT_HOLD_FRAMES
 
         self.was_near_forearms = is_near
         self.last_ball_center = ball_center
         draw_forearm_contact(frame, body_points, ball_center, is_near)
-        return is_new_contact
+        # Zwróć True jeśli jesteśmy przy piłce LUB w oknie podtrzymania
+        return is_near or self.contact_hold_remaining > 0
 
 
 def is_ball_close_to_wrists(frame, body_points, ball_positions):
@@ -565,6 +629,41 @@ def is_ball_close_to_wrists(frame, body_points, ball_positions):
                 return True
 
     return False
+
+
+def draw_pose_skeleton(frame, landmarks):
+    """
+    Rysuje pełny szkielet MediaPipe Pose z czerwonymi markerami na wszystkich 33 punktach.
+
+    Działanie:
+      1. Linie połączeń (POSE_CONNECTIONS) — jasno-szare, subtelne
+      2. Każdy punkt landmarku — czerwone wypełnione koło z białą obwiódką
+
+    Minimalna widoczność landmarku: 0.4 (niskopewne punkty pomijane)
+    """
+    h, w = frame.shape[:2]
+    MIN_VIS = 0.4
+
+    # Rysuj linie połączeń jako pierwsze (pod punktami)
+    for connection in mp_pose.POSE_CONNECTIONS:
+        start_idx, end_idx = connection
+        lm_s = landmarks[start_idx]
+        lm_e = landmarks[end_idx]
+        if getattr(lm_s, "visibility", 1.0) < MIN_VIS or getattr(lm_e, "visibility", 1.0) < MIN_VIS:
+            continue
+        x_s, y_s = int(lm_s.x * w), int(lm_s.y * h)
+        x_e, y_e = int(lm_e.x * w), int(lm_e.y * h)
+        cv2.line(frame, (x_s, y_s), (x_e, y_e), (180, 180, 180), 2, cv2.LINE_AA)
+
+    # Rysuj czerwone markery na każdym punkcie landmarku
+    for lm in landmarks:
+        if getattr(lm, "visibility", 1.0) < MIN_VIS:
+            continue
+        x, y = int(lm.x * w), int(lm.y * h)
+        # Biała obwódka
+        cv2.circle(frame, (x, y), 6, (255, 255, 255), -1, cv2.LINE_AA)
+        # Czerwone wypełnienie
+        cv2.circle(frame, (x, y), 4, (0, 0, 220), -1, cv2.LINE_AA)
 
 
 def resize_to_width(frame, target_width):
@@ -606,7 +705,8 @@ def analyze_frame(
         pose_landmarks_for_use = stabilized_landmarks
 
     if pose_landmarks_for_use:
-        mp_drawing.draw_landmarks(frame, pose_landmarks_for_use, mp_pose.POSE_CONNECTIONS)
+        # Rysuj szkielet: czerwone markery + szare linie (zamiast domyślnych mp_drawing)
+        draw_pose_skeleton(frame, pose_landmarks_for_use.landmark)
         body_points = build_body_points(pose_landmarks_for_use.landmark)
         draw_forearm_contact(frame, body_points, None, False)
         knee_angle = calculate_knee_angle_value(body_points)
@@ -650,6 +750,9 @@ def analyze_frame(
         "hasBall": bool(ball_positions),
         "source": source,
         "isAnalyzing": True,
+        # Wewnętrzne — używane przez biomechanikę, NIE są wysyłane do GUI
+        "_ballCenters": ball_positions,
+        "_bodyPoints": body_points,
     }
 
     return frame, metrics
@@ -858,6 +961,13 @@ def stream_preprocessed_frames():
 
 
 def stream_camera_frames(capture_source, current_source):
+    """
+    Pętla wideo dla trybu jednej kamery (frontowej lub bocznej).
+
+    Tryb kamery odczytywany z source_state["cameraMode"]:
+      "front" → analizuj_front() + detekcja piłki (bbox "PIŁKA" na klatce)
+      "side"  → analizuj_bok() + WristTrajectoryTracker (zamach)
+    """
     try:
         live_pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
     except Exception as error:
@@ -903,17 +1013,25 @@ def stream_camera_frames(capture_source, current_source):
     last_posture_hint = None
     failed_reads = 0
 
+    # ── Biomechanika: tryb kamery i tracker zamachu ──────────────────────────
+    camera_mode = current_source.get("cameraMode", "front")
+    wrist_tracker = WristTrajectoryTracker()  # do śledzenia zamachu (kamera boczna)
+
     update_metrics(
         isAnalyzing=True,
         source="camera",
-        status="Analiza kamery w toku",
+        cameraMode=camera_mode,
+        status=f"Analiza kamery {'frontowej' if camera_mode == 'front' else 'bocznej'} w toku",
         totalContacts=0,
         videoProcessingStatus="idle",
         videoProcessingProgress=0,
+        brakPracyNog=False,
+        typOdbicia=None,
+        fuzjaOcena=0,
     )
 
     start_time = datetime.utcnow()
-    
+
     stats = {
         "contacts": 0,
         "warnings": 0,
@@ -966,6 +1084,25 @@ def stream_camera_frames(capture_source, current_source):
         metrics, no_pose_streak = stabilize_live_metrics(metrics, last_metrics, no_pose_streak)
         last_metrics = metrics
 
+        # ── INTEGRACJA BIOMECHANIKI: kamera frontowa ─────────────────────────
+        # Wywołaj analizuj_front() i przekaż wyniki do GUI przez update_metrics()
+        bio_front = {}
+        bio_bok = {}
+
+        if camera_mode == "front" and metrics.get("hasPose"):
+            _bp = metrics.get("_bodyPoints", {})
+            _ball_positions = metrics.get("_ballCenters", [])  # Z analyze_frame — BEZ drugiego YOLO
+            if _bp:
+                bio_front = analizuj_front(_bp, _ball_positions, analyzed_frame.shape)
+
+        # ── INTEGRACJA BIOMECHANIKI: kamera boczna ───────────────────────────
+        elif camera_mode == "side" and metrics.get("hasPose"):
+            _bp = metrics.get("_bodyPoints", {})
+            if _bp:
+                bio_bok = analizuj_bok(_bp, wrist_tracker)
+                metrics["komunikatKolana"] = bio_bok.get("komunikat_kolana")
+                metrics["postureWarnings"] = bio_bok.get("komunikat_kolana")
+
         now = time.time()
         posture_warning = metrics.get("postureWarnings")
         if posture_warning != last_posture_hint and (now - last_hint_sent_at) >= LIVE_HINT_MIN_INTERVAL_SEC:
@@ -978,25 +1115,27 @@ def stream_camera_frames(capture_source, current_source):
             "warnings": last_posture_hint,
         }
 
+        # Dodaj pola biomechaniczne do metryki publikowanej do GUI
+        if bio_front:
+            published_metrics["typOdbicia"] = bio_front.get("typ_odbicia")
+            published_metrics["dystansPilkaRece"] = bio_front.get("dystans_pilka_px")
+            # Jeśli wykryto odbicie → zaktualizuj score i kontakt
+            if bio_front.get("typ_odbicia"):
+                published_metrics["isContact"] = True
+        if bio_bok:
+            published_metrics["komunikatKolana"] = bio_bok.get("komunikat_kolana")
+            published_metrics["katBiodra"] = bio_bok.get("kat_biodra")
+            published_metrics["zamachWykryty"] = bio_bok.get("zamach_wykryty", False)
+            published_metrics["dynamikaZamachu"] = bio_bok.get("dynamika_zamachu")
+
+        published_metrics.pop("_bodyPoints", None)
+        published_metrics.pop("_ballCenters", None)
+
         update_metrics(
             **published_metrics,
             status=build_live_status(published_metrics),
             videoProcessingStatus="idle",
             videoProcessingProgress=0,
-        )
-
-        overlay_text = last_posture_hint or ("Postawa OK" if metrics.get("hasPose") else "Ustaw sylwetke w kadrze")
-        overlay_color = (0, 220, 0) if metrics.get("hasPose") and not last_posture_hint else (0, 0, 255)
-        cv2.rectangle(analyzed_frame, (0, 0), (min(analyzed_frame.shape[1], 900), 42), (0, 0, 0), -1)
-        cv2.putText(
-            analyzed_frame,
-            f"Punkty: {metrics.get('score', 0)}/100 | {overlay_text}",
-            (12, 28),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            overlay_color,
-            2,
-            cv2.LINE_AA,
         )
 
         if metrics.get("hasPose"):
@@ -1008,6 +1147,26 @@ def stream_camera_frames(capture_source, current_source):
         if metrics.get("isContact") and metrics.get("contactScore") is not None:
             stats["sum_contact_score"] += metrics.get("contactScore", 0)
             stats["count_contact"] += 1
+
+        # ── Minimalny wskaźnik statusu (mały dot w rogu) — reszta trafia do GUI HUD ──
+        # Zielony = sylwetka wykryta i pozycja OK
+        # Żółty = sylwetka wykryta, ostrzegaź
+        # Czerwony = brak sylwetki
+        dot_color = (
+            (0, 200, 0) if metrics.get("hasPose") and not last_posture_hint
+            else (0, 200, 230) if metrics.get("hasPose")
+            else (0, 0, 200)
+        )
+        cv2.circle(analyzed_frame, (analyzed_frame.shape[1] - 18, 18), 8, (0, 0, 0), -1)
+        cv2.circle(analyzed_frame, (analyzed_frame.shape[1] - 18, 18), 6, dot_color, -1)
+
+        # Jeśli wykryto odbicie — subtelny błysk na dole klatki (1 sekunda)
+        if bio_front.get("typ_odbicia"):
+            h_f = analyzed_frame.shape[0]
+            w_f = analyzed_frame.shape[1]
+            overlay = analyzed_frame.copy()
+            cv2.rectangle(overlay, (0, h_f - 6), (w_f, h_f), (0, 220, 80), -1)
+            cv2.addWeighted(overlay, 0.7, analyzed_frame, 0.3, 0, analyzed_frame)
 
         ret, buffer = cv2.imencode(".jpg", analyzed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
         if not ret:
@@ -1031,7 +1190,7 @@ def stream_camera_frames(capture_source, current_source):
     update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
 
     end_time = datetime.utcnow()
-    
+
     if stats["count_pose"] > 0:
         final_stats = {
             'total_contacts': contact_tracker.contact_count,
@@ -1040,7 +1199,7 @@ def stream_camera_frames(capture_source, current_source):
             'avg_contact_score': stats["sum_contact_score"] // stats["count_contact"] if stats["count_contact"] else 0,
             'overall_score': stats["sum_score"] // stats["count_pose"]
         }
-        
+
         current_src = snapshot_source()
         if current_src.get("userId"):
             save_training_session(
@@ -1071,18 +1230,80 @@ def generate_frames():
     return
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Pomocnicze funkcje do integracji biomechanics.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_ball_centers(frame):
+    """
+    Uruchamia YOLO na klatce i zwraca listę (cx, cy) środków bbox piłek.
+    Nie rysuje bbox — tylko wyciąga środki (rysowanie robi analyze_frame/find_ball_positions).
+    Lekka wersja dla biomechaniki, nie duplikuje kosztownej inferencji.
+    """
+    # UWAGA: find_ball_positions() już narysowało bbox i zwróciło środki piłek
+    # Tutaj używamy bezpośrednio kontaktu z YOLO tylko gdy potrzeba świeżych danych.
+    # W praktyce, korzystamy z już policzonej listy przez analyze_frame,
+    # dlatego ta funkcja jest minimalna — sprawdza jedynie ostatni wynik YOLO.
+    results_yolo = yolo_model(frame, conf=0.4, verbose=False)
+    centers = []
+    for result in results_yolo:
+        for box in result.boxes:
+            cls = int(box.cls[0])
+            if result.names[cls] != "sports ball":
+                continue
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            area = (x2 - x1) * (y2 - y1)
+            if area <= 200:
+                continue
+            centers.append(((x1 + x2) // 2, (y1 + y2) // 2))
+    return centers
+
+
+def _draw_ball_labels(frame, ball_centers):
+    """
+    Rysuje polskie etykiety "PIŁKA" nad każdym centrum piłki.
+    Wywoływana po analyze_frame() — find_ball_positions już narysowała bbox.
+    """
+    for cx, cy in ball_centers:
+        cv2.putText(
+            frame, "PILKA",
+            (cx - 25, max(cy - 15, 15)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2, cv2.LINE_AA,
+        )
+
+
 def stream_dual_camera_frames(current_source):
+    """
+    Pętla Dual-Cam z synchronizacją Queue i fuzją biomechaniczną.
+
+    Architektura:
+      Wątek A (kamera frontowa) → kolejka_front (maxsize=1) → środki piłek + szkielet
+      Wątek B (kamera boczna)  → kolejka_bok  (maxsize=1) → kąty stawów + zamach
+      Wątek główny (generator) → pobiera z obu kolejek → fuzja_sensorow() → GUI
+
+    Queue(maxsize=1) + put_nowait() = szybsza kamera nie blokuje GUI —
+    po prostu nadpisuje klatkę, wolniejsza blokuje z timeout=0.08s.
+    """
+    import queue as _queue
+
     cam_a = int(current_source.get("cameraIndex") or 0)
     cam_b = current_source.get("cameraIndex2")
     if cam_b is None:
         update_metrics(isAnalyzing=False, status="Brak drugiej kamery", warnings="Brak drugiej kamery", source="camera")
         return
 
-    camera1 = cv2.VideoCapture(cam_a)
-    camera2 = cv2.VideoCapture(int(cam_b))
+    # ── Inicjalizacja kamer ──────────────────────────────────────────────────
+    if sys.platform == "darwin":
+        camera1 = cv2.VideoCapture(cam_a, cv2.CAP_AVFOUNDATION)
+        camera2 = cv2.VideoCapture(int(cam_b), cv2.CAP_AVFOUNDATION)
+    else:
+        camera1 = cv2.VideoCapture(cam_a)
+        camera2 = cv2.VideoCapture(int(cam_b))
+
     for cam in (camera1, camera2):
         cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         cam.set(cv2.CAP_PROP_FRAME_WIDTH, LIVE_STREAM_WIDTH)
+        cam.set(cv2.CAP_PROP_FPS, LIVE_STREAM_FPS)
 
     if not camera1.isOpened() or not camera2.isOpened():
         update_metrics(
@@ -1096,121 +1317,252 @@ def stream_dual_camera_frames(current_source):
         camera2.release()
         return
 
+    # ── Kolejki synchronizacji (maxsize=1 = nie blokuje GUI) ────────────────
+    # Kamera A = frontowa, Kamera B = boczna
+    kolejka_front: _queue.Queue = _queue.Queue(maxsize=1)
+    kolejka_bok:   _queue.Queue = _queue.Queue(maxsize=1)
+    stop_event = threading.Event()
+
+    # ── Osobne trackery dla każdej kamery ───────────────────────────────────
+    pose_tracker_front = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    pose_tracker_bok   = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    stabilizer_front = PoseLandmarkStabilizer(alpha=LIVE_POSE_SMOOTH_ALPHA, hold_frames=LIVE_POSE_HOLD_FRAMES)
+    stabilizer_bok   = PoseLandmarkStabilizer(alpha=LIVE_POSE_SMOOTH_ALPHA, hold_frames=LIVE_POSE_HOLD_FRAMES)
+    posture_eval_front = VolleyballPostureEvaluator()
+    posture_eval_bok   = VolleyballPostureEvaluator()
+    posture_deb_front  = MessageDebouncer(stable_frames=LIVE_MESSAGE_STABLE_FRAMES)
+    posture_deb_bok    = MessageDebouncer(stable_frames=LIVE_MESSAGE_STABLE_FRAMES)
+    contact_deb        = MessageDebouncer(stable_frames=max(3, LIVE_MESSAGE_STABLE_FRAMES // 2))
+    contact_tracker    = BallContactTracker(cooldown_frames=max(10, int(LIVE_STREAM_FPS * 0.45)))
+    wrist_tracker_bok  = WristTrajectoryTracker()
+
+    frame_counter_front = [0]
+    frame_counter_bok   = [0]
+
+    # ── Wątek A: kamera frontowa ─────────────────────────────────────────────
+    def grab_front():
+        failed = 0
+        while not stop_event.is_set():
+            ok, raw = camera1.read()
+            if not ok:
+                failed += 1
+                if failed >= 20:
+                    break
+                time.sleep(0.02)
+                continue
+            failed = 0
+            frame = resize_to_width(raw, LIVE_STREAM_WIDTH)
+            try:
+                analyzed, m = analyze_frame(
+                    frame, pose_tracker_front,
+                    detect_ball=(frame_counter_front[0] % max(1, LIVE_BALL_EVERY_N_FRAMES) == 0),
+                    source="camera",
+                    contact_tracker=contact_tracker,
+                    frame_index=frame_counter_front[0],
+                    pose_stabilizer=stabilizer_front,
+                    posture_evaluator=posture_eval_front,
+                    posture_debouncer=posture_deb_front,
+                    contact_debouncer=contact_deb,
+                )
+            except Exception:
+                frame_counter_front[0] += 1
+                continue
+            frame_counter_front[0] += 1
+            # Biomechanika frontowa — używamy body_points i ball_centers z analyze_frame
+            # (NIE wołamy _extract_ball_centers ani YOLO po raz drugi!)
+            bp_front = m.get("_bodyPoints", {})
+            ball_centers = m.get("_ballCenters", [])
+            dane_front = analizuj_front(bp_front, ball_centers, analyzed.shape)
+            # Wynik do kolejki (nadpisuje jeśli pełna — drop old frame)
+            try:
+                kolejka_front.put_nowait((analyzed, m, dane_front))
+            except _queue.Full:
+                try:
+                    kolejka_front.get_nowait()
+                except _queue.Empty:
+                    pass
+                kolejka_front.put_nowait((analyzed, m, dane_front))
+
+
+    # ── Wątek B: kamera boczna ───────────────────────────────────────────────
+    def grab_bok():
+        failed = 0
+        while not stop_event.is_set():
+            ok, raw = camera2.read()
+            if not ok:
+                failed += 1
+                if failed >= 20:
+                    break
+                time.sleep(0.02)
+                continue
+            failed = 0
+            frame = resize_to_width(raw, LIVE_STREAM_WIDTH)
+            try:
+                analyzed, m = analyze_frame(
+                    frame, pose_tracker_bok,
+                    detect_ball=False,  # kamera boczna nie śledzi piłki
+                    source="camera",
+                    contact_tracker=None,
+                    frame_index=frame_counter_bok[0],
+                    pose_stabilizer=stabilizer_bok,
+                    posture_evaluator=posture_eval_bok,
+                    posture_debouncer=posture_deb_bok,
+                    contact_debouncer=None,
+                )
+            except Exception:
+                frame_counter_bok[0] += 1
+                continue
+            frame_counter_bok[0] += 1
+            bp_bok = None
+            lms_bok = stabilizer_bok.last_landmarks()
+            if lms_bok is not None:
+                bp_bok = build_body_points(lms_bok.landmark)
+            dane_bok = analizuj_bok(bp_bok or {}, wrist_tracker_bok)
+            # Overlay kąta kolanowego na klatce bocznej
+            if dane_bok.get("kat_kolana") is not None:
+                kol_txt = f"Kolano: {dane_bok['kat_kolana']:.0f}deg"
+                kol_kolor = (0, 220, 0) if "prawidlowa" in dane_bok.get("komunikat_kolana", "").lower() or "prawidłowa" in dane_bok.get("komunikat_kolana", "") else (0, 80, 255)
+                cv2.putText(analyzed, kol_txt,
+                    (10, analyzed.shape[0] - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, kol_kolor, 2, cv2.LINE_AA)
+            try:
+                kolejka_bok.put_nowait((analyzed, m, dane_bok))
+            except _queue.Full:
+                try:
+                    kolejka_bok.get_nowait()
+                except _queue.Empty:
+                    pass
+                kolejka_bok.put_nowait((analyzed, m, dane_bok))
+
+    # ── Uruchom wątki grabberów ───────────────────────────────────────────────
+    t_front = threading.Thread(target=grab_front, daemon=True)
+    t_bok   = threading.Thread(target=grab_bok,   daemon=True)
+    t_front.start()
+    t_bok.start()
+
+    update_metrics(
+        isAnalyzing=True,
+        source="camera",
+        cameraMode="dual",
+        status="Analiza z dwóch kamer — synchronizacja...",
+        totalContacts=0,
+        videoProcessingStatus="idle",
+        videoProcessingProgress=0,
+        brakPracyNog=False,
+        typOdbicia=None,
+        fuzjaOcena=0,
+    )
+
     frame_counter = 0
     target_delay = 1 / max(1, LIVE_STREAM_FPS)
     next_due = time.time()
     last_metrics = None
     no_pose_streak = 0
-    contact_tracker = BallContactTracker(cooldown_frames=max(10, int(LIVE_STREAM_FPS * 0.45)))
 
-    stabilizer_a = PoseLandmarkStabilizer(alpha=LIVE_POSE_SMOOTH_ALPHA, hold_frames=LIVE_POSE_HOLD_FRAMES)
-    stabilizer_b = PoseLandmarkStabilizer(alpha=LIVE_POSE_SMOOTH_ALPHA, hold_frames=LIVE_POSE_HOLD_FRAMES)
-    try:
-        live_pose_tracker = get_pose_tracker()
-    except Exception as error:
-        update_metrics(
-            isAnalyzing=False,
-            status=f"Nie mozna uruchomic detekcji pozy: {error}",
-            warnings="Blad inicjalizacji detekcji pozy",
-            postureWarnings="Blad inicjalizacji detekcji pozy",
-            source="camera",
-        )
-        camera1.release()
-        camera2.release()
-        return
-
-    update_metrics(
-        isAnalyzing=True,
-        source="camera",
-        status="Analiza z dwoch kamer w toku",
-        totalContacts=0,
-        videoProcessingStatus="idle",
-        videoProcessingProgress=0,
-    )
-
+    # ── Pętla główna generatora (synchronizacja klatek z obu wątków) ─────────
     while True:
         latest_source = snapshot_source()
         if latest_source["mode"] != "camera_dual":
             break
 
-        for _ in range(2):
-            camera1.grab()
-            camera2.grab()
-        ok1, frame1 = camera1.retrieve()
-        ok2, frame2 = camera2.retrieve()
-        if not ok1 or not ok2:
-            break
+        try:
+            # Blokujące pobieranie z timeoutem — "software lock-step"
+            # Jeśli jedna kamera jest wolniejsza, czekamy max 80 ms
+            frame_front, m_front, dane_front = kolejka_front.get(timeout=0.08)
+            frame_bok,   m_bok,   dane_bok   = kolejka_bok.get(timeout=0.08)
+        except Exception:
+            # Jedna z kamer spóźniona — użyj ostatnich metryk i kontynuuj
+            time.sleep(0.02)
+            continue
 
-        display1 = resize_to_width(frame1, LIVE_STREAM_WIDTH)
-        display2 = resize_to_width(frame2, LIVE_STREAM_WIDTH)
+        # ── FUZJA SENSORÓW ────────────────────────────────────────────────────
+        # PUNKT INTEGRACJI: wywołaj fuzja_sensorow() dla obu kamer
+        wynik_fuzji = fuzja_sensorow(dane_front, dane_bok)
 
-        should_analyze_pose = frame_counter % max(1, LIVE_POSE_EVERY_N_FRAMES) == 0
-        should_detect_ball = frame_counter % max(1, LIVE_BALL_EVERY_N_FRAMES) == 0
-
-        metrics = None
-        if should_analyze_pose:
-            analysis1 = resize_to_width(display1.copy(), LIVE_ANALYSIS_WIDTH)
-            analysis2 = resize_to_width(display2.copy(), LIVE_ANALYSIS_WIDTH)
-
-            analyzed1, m1 = analyze_frame(
-                analysis1,
-                live_pose_tracker,
-                detect_ball=should_detect_ball,
-                source="camera",
-                contact_tracker=contact_tracker,
-                frame_index=frame_counter,
-                pose_stabilizer=stabilizer_a,
-                posture_evaluator=live_posture_evaluator,
-                posture_debouncer=live_posture_debouncer,
-                contact_debouncer=live_contact_debouncer,
-            )
-            analyzed2, m2 = analyze_frame(
-                analysis2,
-                live_pose_tracker,
-                detect_ball=should_detect_ball,
-                source="camera",
-                contact_tracker=contact_tracker,
-                frame_index=frame_counter,
-                pose_stabilizer=stabilizer_b,
-                posture_evaluator=live_posture_evaluator,
-                posture_debouncer=live_posture_debouncer,
-                contact_debouncer=live_contact_debouncer,
-            )
-
-            display1 = resize_to_width(analyzed1, LIVE_STREAM_WIDTH)
-            display2 = resize_to_width(analyzed2, LIVE_STREAM_WIDTH)
-
-            # wybierz "lepszą" kamerę do metryk: ta, która ma pose/większy score
-            if m1.get("hasPose") and not m2.get("hasPose"):
-                metrics = m1
-            elif m2.get("hasPose") and not m1.get("hasPose"):
-                metrics = m2
-            else:
-                metrics = m1 if m1.get("score", 0) >= m2.get("score", 0) else m2
-
-            metrics, no_pose_streak = stabilize_live_metrics(metrics, last_metrics, no_pose_streak)
-            last_metrics = metrics
-            update_metrics(
-                **metrics,
-                status=build_live_status(metrics),
-                videoProcessingStatus="idle",
-                videoProcessingProgress=0,
-            )
+        # Wybierz bazowe metryki (z kamery frontowej — tam jest piłka)
+        if m_front.get("hasPose") or not m_bok.get("hasPose"):
+            metrics = m_front
         else:
-            la = stabilizer_a.last_landmarks()
-            lb = stabilizer_b.last_landmarks()
-            if la is not None:
-                mp_drawing.draw_landmarks(display1, la, mp_pose.POSE_CONNECTIONS)
-            if lb is not None:
-                mp_drawing.draw_landmarks(display2, lb, mp_pose.POSE_CONNECTIONS)
+            metrics = m_bok
 
-        h = min(display1.shape[0], display2.shape[0])
-        if display1.shape[0] != h:
-            display1 = cv2.resize(display1, (display1.shape[1], h), interpolation=cv2.INTER_AREA)
-        if display2.shape[0] != h:
-            display2 = cv2.resize(display2, (display2.shape[1], h), interpolation=cv2.INTER_AREA)
+        metrics, no_pose_streak = stabilize_live_metrics(metrics, last_metrics, no_pose_streak)
+        last_metrics = metrics
 
-        combined = cv2.hconcat([display1, display2])
+        # ── Publikuj wyniki fuzji do GUI przez WebSocket ───────────────────────
+        # Pola trafiają do: ProgressBar (fuzjaOcena=score), pól tekstowych,
+        # etykiet, alertów — w zależności od implementacji frontendu.
+        komunikat_kontaktu = None
+        if wynik_fuzji.get("brak_pracy_nog"):
+            # BŁĄD KRYTYCZNY: odbicie bez pracy nóg
+            komunikat_kontaktu = "Odbicie wykonane samymi rękami! Brak pracy nóg!"
+
+        metrics.pop("_bodyPoints", None)
+        metrics.pop("_ballCenters", None)
+
+        update_metrics(
+            **metrics,
+            # Biomechaniczne pola fuzji
+            score=wynik_fuzji["ocena_fuzji"],           # → ProgressBar
+            fuzjaOcena=wynik_fuzji["ocena_fuzji"],      # → ProgressBar (alias)
+            postureWarnings=wynik_fuzji["komunikat_fuzji"],  # → pole tekstowe
+            warnings=wynik_fuzji["komunikat_fuzji"],
+            contactWarning=komunikat_kontaktu,           # → alert GUI
+            brakPracyNog=wynik_fuzji["brak_pracy_nog"],  # → czerwony alert
+            typOdbicia=wynik_fuzji["typ_odbicia"],       # → etykieta GUI
+            komunikatKolana=dane_bok.get("komunikat_kolana"),
+            katBiodra=dane_bok.get("kat_biodra"),
+            zamachWykryty=dane_bok.get("zamach_wykryty", False),
+            dynamikaZamachu=dane_bok.get("dynamika_zamachu"),
+            dystansPilkaRece=dane_front.get("dystans_pilka_px"),
+            isContact=bool(wynik_fuzji.get("typ_odbicia")),
+            cameraMode="dual",
+            status=wynik_fuzji["komunikat_fuzji"] or build_live_status(metrics),
+            videoProcessingStatus="idle",
+            videoProcessingProgress=0,
+        )
+
+        # ── Minimalny overlay — reszta trafia do GUI HUD przez WebSocket ─────
+        # Kamera frontowa: mały dot statusu w górnym rogu
+        dot_f = (
+            (0, 200, 0)   if m_front.get("hasPose") and not wynik_fuzji.get("brak_pracy_nog")
+            else (0, 200, 230) if m_front.get("hasPose")
+            else (0, 0, 200)
+        )
+        cv2.circle(frame_front, (frame_front.shape[1] - 18, 18), 8, (0, 0, 0), -1)
+        cv2.circle(frame_front, (frame_front.shape[1] - 18, 18), 6, dot_f, -1)
+
+        # Kamera boczna: mały dot statusu
+        dot_b = (0, 200, 0) if m_bok.get("hasPose") else (0, 0, 200)
+        cv2.circle(frame_bok, (frame_bok.shape[1] - 18, 18), 8, (0, 0, 0), -1)
+        cv2.circle(frame_bok, (frame_bok.shape[1] - 18, 18), 6, dot_b, -1)
+
+        # Subtelny błysk kontaktu: zielony pasek na dole klatki frontowej
+        if wynik_fuzji.get("typ_odbicia"):
+            h_f, w_f = frame_front.shape[:2]
+            ov = frame_front.copy()
+            cv2.rectangle(ov, (0, h_f - 6), (w_f, h_f), (0, 220, 80), -1)
+            cv2.addWeighted(ov, 0.75, frame_front, 0.25, 0, frame_front)
+
+        # Czerwona obwódka gdy błąd "brak pracy nóg"
+        if wynik_fuzji.get("brak_pracy_nog"):
+            cv2.rectangle(frame_front, (0, 0), (frame_front.shape[1] - 1, frame_front.shape[0] - 1),
+                          (0, 0, 220), 4)
+
+        # ── Etykiety kamer (małe, w rogu) ────────────────────────────────────
+        # "FRONT" i "BOK" — tylko żeby użytkownik wiedział co to
+        cv2.putText(frame_front, "FRONT", (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45, (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(frame_bok, "BOK", (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45, (200, 200, 200), 1, cv2.LINE_AA)
+
+        # ── Scal klatki obok siebie ───────────────────────────────────────────
+        h = min(frame_front.shape[0], frame_bok.shape[0])
+        if frame_front.shape[0] != h:
+            frame_front = cv2.resize(frame_front, (frame_front.shape[1], h), interpolation=cv2.INTER_AREA)
+        if frame_bok.shape[0] != h:
+            frame_bok = cv2.resize(frame_bok, (frame_bok.shape[1], h), interpolation=cv2.INTER_AREA)
+
+        combined = cv2.hconcat([frame_front, frame_bok])
 
         ret, buffer = cv2.imencode(".jpg", combined, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
         if not ret:
@@ -1229,9 +1581,15 @@ def stream_dual_camera_frames(current_source):
         else:
             next_due = time.time()
 
+    # ── Sprzątanie ────────────────────────────────────────────────────────────
+    stop_event.set()
+    t_front.join(timeout=1.0)
+    t_bok.join(timeout=1.0)
+    pose_tracker_front.close()
+    pose_tracker_bok.close()
     camera1.release()
     camera2.release()
-    update_metrics(isAnalyzing=False, status="Analiza zatrzymana")
+    update_metrics(isAnalyzing=False, status="Analiza zatrzymana", cameraMode="front")
 
 
 @app.get("/api/source")
@@ -1246,8 +1604,19 @@ def stop_analysis():
 
 
 @app.post("/api/source/camera")
-def set_camera_source(camera_index: int = 0, user_id: str = None, authorization: str | None = Header(default=None)):
+def set_camera_source(
+    camera_index: int = 0,
+    user_id: str = None,
+    authorization: str | None = Header(default=None),
+    camera_mode: str = "front",  # "front" lub "side"
+):
+    """
+    Ustawia źródło na kamerę.
+    camera_mode: "front" (kamera frontowa, analiza piłki + symetria)
+                 "side"  (kamera boczna, analiza kolan + zamach)
+    """
     access_token = authorization.removeprefix("Bearer ").strip() if authorization else None
+    safe_mode = camera_mode if camera_mode in ("front", "side") else "front"
     with state_lock:
         source_state.update(
             {
@@ -1259,6 +1628,7 @@ def set_camera_source(camera_index: int = 0, user_id: str = None, authorization:
                 "jobId": source_state["jobId"] + 1,
                 "userId": user_id,
                 "accessToken": access_token,
+                "cameraMode": safe_mode,
             }
         )
         preprocessed_state.update(
@@ -1271,17 +1641,22 @@ def set_camera_source(camera_index: int = 0, user_id: str = None, authorization:
             }
         )
 
+    mode_label = "frontową" if safe_mode == "front" else "boczną"
     update_metrics(
         source="camera",
-        status="Wybrano kamerę",
+        cameraMode=safe_mode,
+        status=f"Wybrano kamerę {mode_label}",
         totalContacts=0,
         contactWarning=None,
         contactScore=None,
         isContact=False,
+        typOdbicia=None,
+        fuzjaOcena=0,
+        brakPracyNog=False,
         videoProcessingStatus="idle",
         videoProcessingProgress=0,
     )
-    return {"ok": True, "source": "camera", "cameraIndex": camera_index}
+    return {"ok": True, "source": "camera", "cameraIndex": camera_index, "cameraMode": safe_mode}
 
 
 @app.post("/api/source/camera-dual")
@@ -1291,6 +1666,11 @@ def set_dual_camera_source(
     user_id: str = None,
     authorization: str | None = Header(default=None),
 ):
+    """
+    Ustawia źródło na dwie kamery z fuzją biomechaniczną.
+    camera_index_a = kamera frontowa (widzi piłkę i ręce)
+    camera_index_b = kamera boczna (widzi kolana i zamach, pod kątem ~45°)
+    """
     access_token = authorization.removeprefix("Bearer ").strip() if authorization else None
     with state_lock:
         source_state.update(
@@ -1303,6 +1683,7 @@ def set_dual_camera_source(
                 "jobId": source_state["jobId"] + 1,
                 "userId": user_id,
                 "accessToken": access_token,
+                "cameraMode": "dual",
             }
         )
         preprocessed_state.update(
@@ -1317,15 +1698,25 @@ def set_dual_camera_source(
 
     update_metrics(
         source="camera",
-        status=f"Wybrano dwie kamery: {camera_index_a} i {camera_index_b}",
+        cameraMode="dual",
+        status=f"Dual-Cam: frontowa ({camera_index_a}) + boczna ({camera_index_b}) | Fuzja biomechaniczna aktywna",
         totalContacts=0,
         contactWarning=None,
         contactScore=None,
         isContact=False,
+        typOdbicia=None,
+        fuzjaOcena=0,
+        brakPracyNog=False,
         videoProcessingStatus="idle",
         videoProcessingProgress=0,
     )
-    return {"ok": True, "source": "camera_dual", "cameraIndex": camera_index_a, "cameraIndex2": camera_index_b}
+    return {
+        "ok": True,
+        "source": "camera_dual",
+        "cameraIndex": camera_index_a,
+        "cameraIndex2": camera_index_b,
+        "cameraMode": "dual",
+    }
 
 
 @app.post("/api/source/upload")
