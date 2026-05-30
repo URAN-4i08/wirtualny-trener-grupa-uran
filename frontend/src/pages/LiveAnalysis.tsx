@@ -32,6 +32,16 @@ type Metrics = {
   isAnalyzing: boolean;
   videoProcessingStatus: 'idle' | 'processing' | 'ready' | 'error';
   videoProcessingProgress: number;
+  // Pola biomechaniczne
+  cameraMode?: 'front' | 'side' | 'dual';
+  fuzjaOcena?: number;
+  komunikatFuzji?: string | null;
+  brakPracyNog?: boolean;
+  typOdbicia?: 'DOLNE' | 'GORNE' | null;
+  komunikatKolana?: string | null;
+  zamachWykryty?: boolean;
+  dynamikaZamachu?: string | null;
+  dystansPilkaRece?: number | null;
 };
 
 function resolveAnalysisLabels(
@@ -90,6 +100,7 @@ export default function LiveAnalysis() {
   const [isUploading, setIsUploading] = useState(false);
   const [feedKey, setFeedKey] = useState(0);
   const [selectedCameraIndex, setSelectedCameraIndex] = useState(0);
+  const [cameraMode, setCameraMode] = useState<'front' | 'side' | 'dual'>('front');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -170,7 +181,12 @@ export default function LiveAnalysis() {
     if (!canStartAnalysisRef.current && !isAnalyzingRef.current) return;
     if (metrics.source === 'camera') {
       try {
-        const url = `/api/source/camera?camera_index=${selectedCameraIndex}${user ? `&user_id=${user.id}` : ''}`;
+        let url: string;
+        if (cameraMode === 'dual') {
+          url = `/api/source/camera-dual?camera_index_a=0&camera_index_b=1${user ? `&user_id=${user.id}` : ''}`;
+        } else {
+          url = `/api/source/camera?camera_index=${selectedCameraIndex}&camera_mode=${cameraMode}${user ? `&user_id=${user.id}` : ''}`;
+        }
         const response = await fetch(apiUrl(url), {
           method: 'POST',
           headers: await getSessionHeaders(),
@@ -178,12 +194,12 @@ export default function LiveAnalysis() {
         if (!response.ok) throw new Error();
         setFeedKey((current) => current + 1);
       } catch {
-        setConnectionError(`Nie udało się uruchomić kamery ${selectedCameraIndex + 1}.`);
+        setConnectionError(`Nie udało się uruchomić kamery.`);
         return;
       }
     }
     setIsAnalyzing(true);
-  }, [metrics.source, selectedCameraIndex, user]);
+  }, [metrics.source, selectedCameraIndex, cameraMode, user]);
 
   const stopAnalysis = useCallback(() => {
     setIsAnalyzing(false);
@@ -208,17 +224,38 @@ export default function LiveAnalysis() {
     return token ? { Authorization: `Bearer ${token}` } : undefined;
   }
 
-  async function selectCamera(cameraIndex = 0) {
+  async function selectCamera(cameraIndex = 0, mode: 'front' | 'side' = 'front') {
     setConnectionError(null);
     setSelectedVideoName(null);
     setSelectedCameraIndex(cameraIndex);
+    setCameraMode(mode);
     if (isAnalyzingRef.current) {
       fetch(apiUrl('/api/analysis/stop'), { method: 'POST' }).catch(() => undefined);
     }
     setMetrics((current) => ({
       ...current,
       source: 'camera',
-      status: `Wybrano kamerę ${cameraIndex + 1}`,
+      status: mode === 'dual'
+        ? 'Dual-Cam: frontowa + boczna'
+        : `Kamera ${cameraIndex + 1} (${mode === 'side' ? 'boczna' : 'frontowa'})`,
+      videoProcessingStatus: 'idle',
+      videoProcessingProgress: 0,
+    }));
+    setFeedKey((current) => current + 1);
+    setIsAnalyzing(false);
+  }
+
+  async function selectDualCamera() {
+    setConnectionError(null);
+    setSelectedVideoName(null);
+    setCameraMode('dual');
+    if (isAnalyzingRef.current) {
+      fetch(apiUrl('/api/analysis/stop'), { method: 'POST' }).catch(() => undefined);
+    }
+    setMetrics((current) => ({
+      ...current,
+      source: 'camera',
+      status: 'Dual-Cam: kamera frontowa (0) + boczna (1)',
       videoProcessingStatus: 'idle',
       videoProcessingProgress: 0,
     }));
@@ -274,29 +311,42 @@ export default function LiveAnalysis() {
 
         <div className="flex flex-wrap gap-3">
           <button
-            onClick={() => selectCamera(0)}
+            onClick={() => selectCamera(0, 'front')}
             className={clsx(
               'flex items-center gap-2 px-4 py-2 rounded-lg border transition',
-              metrics.source === 'camera' && selectedCameraIndex === 0
+              metrics.source === 'camera' && cameraMode === 'front'
                 ? 'bg-primary/15 text-primary border-primary/30'
                 : 'bg-surface-variant/50 text-white border-white/10 hover:bg-surface-variant',
             )}
           >
             <Camera className="w-4 h-4" />
-            Kamera 1
+            Kamera (Front)
           </button>
 
           <button
-            onClick={() => selectCamera(1)}
+            onClick={() => selectCamera(0, 'side')}
             className={clsx(
               'flex items-center gap-2 px-4 py-2 rounded-lg border transition',
-              metrics.source === 'camera' && selectedCameraIndex === 1
+              metrics.source === 'camera' && cameraMode === 'side'
                 ? 'bg-primary/15 text-primary border-primary/30'
                 : 'bg-surface-variant/50 text-white border-white/10 hover:bg-surface-variant',
             )}
           >
             <Camera className="w-4 h-4" />
-            Kamera 2
+            Kamera (Bok)
+          </button>
+
+          <button
+            onClick={selectDualCamera}
+            className={clsx(
+              'flex items-center gap-2 px-4 py-2 rounded-lg border transition',
+              metrics.source === 'camera' && cameraMode === 'dual'
+                ? 'bg-secondary/15 text-secondary border-secondary/30'
+                : 'bg-surface-variant/50 text-white border-white/10 hover:bg-surface-variant',
+            )}
+          >
+            <MonitorPlay className="w-4 h-4" />
+            Dual-Cam
           </button>
 
           <input
@@ -410,6 +460,30 @@ export default function LiveAnalysis() {
             )}
           </div>
 
+          {/* Alert: Brak pracy nóg (Dual-Cam) */}
+          {metrics.brakPracyNog && (
+            <div className="glass-card p-4 rounded-2xl border-red-500/40 bg-red-500/10 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-red-400 font-bold text-sm">Odbicie samymi rękami!</p>
+                <p className="text-red-300/70 text-xs mt-0.5">Brak pracy nóg — zaangażuj nogi i biodra</p>
+              </div>
+            </div>
+          )}
+
+          {/* Typ wykrytego odbicia */}
+          {metrics.typOdbicia && (
+            <div className="glass-card p-4 rounded-2xl border-green-500/30 bg-green-500/10 flex items-center gap-3">
+              <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
+              <div>
+                <p className="text-green-400 font-bold">Odbicie {metrics.typOdbicia}</p>
+                {metrics.komunikatFuzji && (
+                  <p className="text-green-300/70 text-xs mt-0.5">{metrics.komunikatFuzji}</p>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="glass-card p-5 rounded-2xl border-white/10">
             <h3 className="text-sm text-on-surface-variant font-medium mb-1">Podpowiedź postawy</h3>
             <div className="mt-3 flex items-start gap-3">
@@ -423,6 +497,19 @@ export default function LiveAnalysis() {
               </p>
             </div>
           </div>
+
+          {/* Komunikat kolan (kamera boczna / dual) */}
+          {metrics.komunikatKolana && (
+            <div className="glass-card p-5 rounded-2xl border-white/10">
+              <h3 className="text-sm text-on-surface-variant font-medium mb-1">Pozycja kolan</h3>
+              <p className={clsx(
+                'font-bold',
+                metrics.komunikatKolana.includes('prawidłowa') ? 'text-green-400' : 'text-amber-400'
+              )}>
+                {metrics.komunikatKolana}
+              </p>
+            </div>
+          )}
 
           <div className="glass-card p-5 rounded-2xl border-white/10">
             <h3 className="text-sm text-on-surface-variant font-medium mb-1">Ocena odbicia</h3>
@@ -466,6 +553,19 @@ export default function LiveAnalysis() {
                 <span className="text-2xl font-bold text-white">{score}%</span>
               </div>
             </div>
+            {/* Dual-cam: wyświetl wynik fuzji */}
+            {cameraMode === 'dual' && metrics.fuzjaOcena !== undefined && (
+              <div className="mt-3 w-full">
+                <p className="text-xs text-on-surface-variant mb-1">Ocena fuzji (obie kamery)</p>
+                <div className="h-2 bg-surface-variant rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-secondary transition-all duration-500"
+                    style={{ width: `${metrics.fuzjaOcena}%` }}
+                  />
+                </div>
+                <p className="text-xs text-right mt-1 text-white font-bold">{metrics.fuzjaOcena}/100</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -24,16 +24,16 @@ class VolleyballPostureEvaluator:
     def __init__(
         self,
         ema_alpha: float = 0.35,
-        knee_straight_on: float = 166.0,
-        knee_straight_off: float = 160.0,
-        knee_low_on: float = 62.0,
-        knee_low_off: float = 70.0,
-        elbow_warn_on: float = 150.0,
-        elbow_warn_off: float = 156.0,
-        hands_warn_on: float = 0.34,
-        hands_warn_off: float = 0.26,
-        platform_warn_on: float = 0.02,
-        platform_warn_off: float = 0.04,
+        knee_straight_on: float = 172.0,   # Poszerzono margines (było 166)
+        knee_straight_off: float = 165.0,  # Poszerzono margines (było 160)
+        knee_low_on: float = 50.0,         # Poszerzono margines (było 62)
+        knee_low_off: float = 60.0,        # Poszerzono margines (było 70)
+        elbow_warn_on: float = 148.0,      # Pół-surowy wymóg wyprostowanych rąk
+        elbow_warn_off: float = 154.0,     # Pół-surowy wymóg wyprostowanych rąk
+        hands_warn_on: float = 0.30,       # Pół-surowy wymóg złączonych dłoni
+        hands_warn_off: float = 0.25,      # Pół-surowy wymóg złączonych dłoni
+        platform_warn_on: float = -0.05,
+        platform_warn_off: float = 0.0,
     ):
         self.ema_alpha = float(ema_alpha)
         self.knee_straight_on = float(knee_straight_on)
@@ -214,12 +214,12 @@ def check_volleyball_position(punkty_ciala):
         pozycja_poprawna = False
         punkty -= 30
         
-    if dystans_nadgarstkow > 0.08: 
+    if dystans_nadgarstkow > 0.07: 
         komunikaty.append("Zlacz dlonie!")
         pozycja_poprawna = False
         punkty -= 30
         
-    if kat_l_lokiec < 155 or kat_p_lokiec < 155:
+    if kat_l_lokiec < 152 or kat_p_lokiec < 152:
         komunikaty.append("Wyprostuj lokcie!")
         pozycja_poprawna = False
         punkty -= 40
