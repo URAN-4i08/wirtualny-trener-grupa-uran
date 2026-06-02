@@ -24,14 +24,14 @@ class VolleyballPostureEvaluator:
     def __init__(
         self,
         ema_alpha: float = 0.35,
-        knee_straight_on: float = 172.0,   # Poszerzono margines (było 166)
-        knee_straight_off: float = 165.0,  # Poszerzono margines (było 160)
-        knee_low_on: float = 50.0,         # Poszerzono margines (było 62)
-        knee_low_off: float = 60.0,        # Poszerzono margines (było 70)
-        elbow_warn_on: float = 148.0,      # Pół-surowy wymóg wyprostowanych rąk
-        elbow_warn_off: float = 154.0,     # Pół-surowy wymóg wyprostowanych rąk
-        hands_warn_on: float = 0.30,       # Pół-surowy wymóg złączonych dłoni
-        hands_warn_off: float = 0.25,      # Pół-surowy wymóg złączonych dłoni
+        knee_straight_on: float = 176.0,   # Poszerzono margines (poluzowano)
+        knee_straight_off: float = 170.0,  # Poszerzono margines (poluzowano)
+        knee_low_on: float = 42.0,         # Poszerzono margines (poluzowano)
+        knee_low_off: float = 52.0,        # Poszerzono margines (poluzowano)
+        elbow_warn_on: float = 140.0,      # Poluzowano wymóg wyprostowanych rąk
+        elbow_warn_off: float = 148.0,     # Poluzowano wymóg wyprostowanych rąk
+        hands_warn_on: float = 0.38,       # Poluzowano wymóg złączonych dłoni
+        hands_warn_off: float = 0.32,      # Poluzowano wymóg złączonych dłoni
         platform_warn_on: float = -0.05,
         platform_warn_off: float = 0.0,
     ):
@@ -145,23 +145,23 @@ class VolleyballPostureEvaluator:
 
         if self._warn_knees_straight:
             komunikaty.append("Ugnij kolana")
-            punkty -= 30
+            punkty -= 20
 
         if self._warn_knees_low:
             komunikaty.append("Wstan odrobine wyzej")
-            punkty -= 15
+            punkty -= 10
 
         if self._warn_hands:
             komunikaty.append("Zlacz dlonie")
-            punkty -= 25
+            punkty -= 18
 
         if self._warn_elbows:
             komunikaty.append("Wyprostuj lokcie")
-            punkty -= 30
+            punkty -= 20
 
         if self._warn_platform:
             komunikaty.append("Ustaw przedramiona nizej")
-            punkty -= 20
+            punkty -= 12
 
         pozycja_poprawna = len(komunikaty) == 0
         if pozycja_poprawna:
