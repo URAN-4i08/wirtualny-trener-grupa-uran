@@ -10,6 +10,12 @@ import {
   StopCircle,
   UploadCloud,
   WifiOff,
+  Clock,
+  Shield,
+  Zap,
+  ArrowRight,
+  Footprints,
+  Activity,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
@@ -42,6 +48,17 @@ type Metrics = {
   zamachWykryty?: boolean;
   dynamikaZamachu?: string | null;
   dystansPilkaRece?: number | null;
+  fazaRuchu?: 'OCZEKIWANIE' | 'PRZYGOTOWANIE' | 'KONTAKT' | 'FOLLOW_THROUGH';
+  rozstawienieStop?: number | null;
+  balansStop?: 'OK' | 'ZA_LEWO' | 'ZA_PRAWO' | null;
+  gotowoscPrzedOdbiciem?: {
+    stopa_ok: boolean;
+    kolana_ok: boolean;
+    platforma_ok: boolean;
+    ruch_ok: boolean;
+  } | null;
+  feedbackFazy?: string | null;
+  katBiodra?: number | null;
 };
 
 function resolveAnalysisLabels(
@@ -567,6 +584,137 @@ export default function LiveAnalysis() {
               </div>
             )}
           </div>
+
+          {/* Panel fazy ruchu */}
+          <div className={clsx(
+            'glass-card p-5 rounded-2xl border phase-indicator',
+            metrics.fazaRuchu === 'OCZEKIWANIE' && 'phase-oczekiwanie',
+            metrics.fazaRuchu === 'PRZYGOTOWANIE' && 'phase-przygotowanie',
+            metrics.fazaRuchu === 'KONTAKT' && 'phase-kontakt',
+            metrics.fazaRuchu === 'FOLLOW_THROUGH' && 'phase-follow-through',
+            !metrics.fazaRuchu && 'phase-oczekiwanie',
+          )}>
+            <h3 className="text-sm text-on-surface-variant font-medium mb-3">Faza ruchu</h3>
+            <div className="flex items-center gap-3">
+              {metrics.fazaRuchu === 'OCZEKIWANIE' && <Clock className="w-6 h-6 text-gray-400" />}
+              {metrics.fazaRuchu === 'PRZYGOTOWANIE' && <Shield className="w-6 h-6 text-blue-400" />}
+              {metrics.fazaRuchu === 'KONTAKT' && <Zap className="w-6 h-6 text-green-400" />}
+              {metrics.fazaRuchu === 'FOLLOW_THROUGH' && <ArrowRight className="w-6 h-6 text-amber-400" />}
+              {!metrics.fazaRuchu && <Clock className="w-6 h-6 text-gray-400" />}
+              <div>
+                <p className={clsx(
+                  'font-bold text-lg',
+                  metrics.fazaRuchu === 'OCZEKIWANIE' && 'text-gray-300',
+                  metrics.fazaRuchu === 'PRZYGOTOWANIE' && 'text-blue-400',
+                  metrics.fazaRuchu === 'KONTAKT' && 'text-green-400',
+                  metrics.fazaRuchu === 'FOLLOW_THROUGH' && 'text-amber-400',
+                  !metrics.fazaRuchu && 'text-gray-300',
+                )}>
+                  {metrics.fazaRuchu === 'FOLLOW_THROUGH' ? 'Follow-Through' : (metrics.fazaRuchu || 'Oczekiwanie')}
+                </p>
+                {metrics.feedbackFazy && (
+                  <p className="text-xs text-on-surface-variant mt-0.5">{metrics.feedbackFazy}</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Panel gotowości — checklist */}
+          {metrics.gotowoscPrzedOdbiciem && (
+            <div className="glass-card p-5 rounded-2xl border-white/10">
+              <h3 className="text-sm text-on-surface-variant font-medium mb-3">Gotowość do odbicia</h3>
+              <div className="space-y-2">
+                {[
+                  { key: 'stopa_ok', label: 'Stopy rozstawione', ok: metrics.gotowoscPrzedOdbiciem.stopa_ok },
+                  { key: 'kolana_ok', label: 'Kolana ugięte', ok: metrics.gotowoscPrzedOdbiciem.kolana_ok },
+                  { key: 'platforma_ok', label: 'Platforma gotowa', ok: metrics.gotowoscPrzedOdbiciem.platforma_ok },
+                  { key: 'ruch_ok', label: 'Praca nóg', ok: metrics.gotowoscPrzedOdbiciem.ruch_ok },
+                ].map((item) => (
+                  <div key={item.key} className="flex items-center gap-2">
+                    <div className={clsx(
+                      'w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold checklist-check',
+                      item.ok ? 'ok bg-green-500/20' : 'fail bg-red-500/20',
+                    )}>
+                      {item.ok ? '✓' : '✗'}
+                    </div>
+                    <span className={clsx(
+                      'text-sm',
+                      item.ok ? 'text-green-400' : 'text-red-400',
+                    )}>
+                      {item.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Panel stóp */}
+          {metrics.rozstawienieStop !== undefined && metrics.rozstawienieStop !== null && (
+            <div className="glass-card p-5 rounded-2xl border-white/10">
+              <div className="flex items-center gap-2 mb-3">
+                <Footprints className="w-4 h-4 text-on-surface-variant" />
+                <h3 className="text-sm text-on-surface-variant font-medium">Pozycja stóp</h3>
+              </div>
+              <div className="foot-spread-bar mb-2">
+                {/* Optimal zone: 0.8-1.3 of shoulder width, mapped to 0-100% (assuming max ~2.0) */}
+                <div
+                  className="foot-spread-optimal"
+                  style={{ left: `${(0.8 / 2.0) * 100}%`, width: `${((1.3 - 0.8) / 2.0) * 100}%` }}
+                />
+                <div
+                  className="foot-spread-marker"
+                  style={{
+                    left: `${Math.min(100, Math.max(0, (metrics.rozstawienieStop / 2.0) * 100))}%`,
+                    backgroundColor: (metrics.rozstawienieStop >= 0.8 && metrics.rozstawienieStop <= 1.3)
+                      ? '#4ade80' : '#f87171',
+                  }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-on-surface-variant mt-3">
+                <span>Za blisko</span>
+                <span className="text-green-400/70">Optymalnie</span>
+                <span>Za szeroko</span>
+              </div>
+              {metrics.balansStop && metrics.balansStop !== 'OK' && (
+                <p className="text-xs text-amber-400 mt-2">
+                  {metrics.balansStop === 'ZA_LEWO' ? '⬅ Ciężar za bardzo w lewo' : '➡ Ciężar za bardzo w prawo'}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Rozszerzony panel kamery bocznej */}
+          {(metrics.katBiodra !== undefined || metrics.zamachWykryty !== undefined) && (
+            <div className="glass-card p-5 rounded-2xl border-white/10">
+              <div className="flex items-center gap-2 mb-3">
+                <Activity className="w-4 h-4 text-on-surface-variant" />
+                <h3 className="text-sm text-on-surface-variant font-medium">Analiza boczna</h3>
+              </div>
+              {metrics.katBiodra !== undefined && metrics.katBiodra !== null && (
+                <div className="mb-3">
+                  <p className="text-xs text-on-surface-variant">Kąt bioder</p>
+                  <p className="text-2xl font-bold text-white">{metrics.katBiodra}°</p>
+                </div>
+              )}
+              {metrics.zamachWykryty !== undefined && (
+                <div className="flex items-center gap-2">
+                  <div className={clsx(
+                    'w-3 h-3 rounded-full',
+                    metrics.zamachWykryty ? 'bg-green-400' : 'bg-gray-500',
+                  )} />
+                  <span className={clsx(
+                    'text-sm font-medium',
+                    metrics.zamachWykryty ? 'text-green-400' : 'text-on-surface-variant',
+                  )}>
+                    {metrics.zamachWykryty
+                      ? (metrics.dynamikaZamachu || 'Zamach wykryty')
+                      : 'Brak zamachu'}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

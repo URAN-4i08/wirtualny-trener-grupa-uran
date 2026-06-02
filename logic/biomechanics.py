@@ -20,16 +20,16 @@ from typing import Optional
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Kamera frontowa
-PROG_PILKA_NADGARSTEK_PX = 90          # odległość px piłki od nadgarstka → odbicie (zwiększono)
-PROG_NADGARSTKI_ZLACZONE = 0.15        # znorm. odległość między nadgarstkami → "złączone" (realistyczne)
-PROG_ODBICIE_GORNE_KAT_MIN = 80.0     # min kąt łokcia przy odbiciu górnym (poluzowano)
-PROG_ODBICIE_GORNE_KAT_MAX = 130.0    # max kąt łokcia przy odbiciu górnym (poluzowano)
+PROG_PILKA_NADGARSTEK_PX = 110         # odległość px piłki od nadgarstka → odbicie (poluzowano)
+PROG_NADGARSTKI_ZLACZONE = 0.20        # znorm. odległość między nadgarstkami → "złączone" (poluzowano)
+PROG_ODBICIE_GORNE_KAT_MIN = 70.0     # min kąt łokcia przy odbiciu górnym (poluzowano)
+PROG_ODBICIE_GORNE_KAT_MAX = 140.0    # max kąt łokcia przy odbiciu górnym (poluzowano)
 
 # Kamera boczna — kolana
-KAT_KOLANO_PRAWIDLOWY_MIN = 90.0      # dolna granica prawidłowego ugięcia (poszerzono)
-KAT_KOLANO_PRAWIDLOWY_MAX = 155.0     # górna granica prawidłowego ugięcia (poszerzono)
-KAT_KOLANO_ZA_WYSOKI = 165.0          # powyżej → "Zbyt wysoka pozycja!"
-KAT_KOLANO_ZA_NISKI = 60.0            # poniżej → "Zbyt głęboka pozycja!"
+KAT_KOLANO_PRAWIDLOWY_MIN = 80.0      # dolna granica prawidłowego ugięcia (poluzowano)
+KAT_KOLANO_PRAWIDLOWY_MAX = 160.0     # górna granica prawidłowego ugięcia (poluzowano)
+KAT_KOLANO_ZA_WYSOKI = 170.0          # powyżej → "Zbyt wysoka pozycja!" (poluzowano)
+KAT_KOLANO_ZA_NISKI = 50.0            # poniżej → "Zbyt głęboka pozycja!" (poluzowano)
 
 # Kamera boczna — zamach nadgarstka
 ZAMACH_HISTORIA_KLATEK = 12           # długość bufora historii Y nadgarstka
@@ -180,6 +180,108 @@ def analizuj_front(punkty: dict, pilka: list, frame_shape: tuple) -> dict:
     return wynik
 
 
+def analizuj_stopy(punkty: dict) -> dict:
+    wynik = {
+        'rozstawienie_stop': None,
+        'rozstawienie_ok': True,
+        'balans': 'OK',
+        'komunikat_stop': 'Oczekuję na stopy w kadrze'
+    }
+    if not punkty:
+        return wynik
+    try:
+        l_kostka = punkty['lewa_kostka']
+        p_kostka = punkty['prawa_kostka']
+        l_ramie = punkty['lewe_ramie']
+        p_ramie = punkty['prawe_ramie']
+        l_biodro = punkty['lewe_biodro']
+        p_biodro = punkty['prawe_biodro']
+    except KeyError:
+        return wynik
+        
+    dystans_kostek = abs(l_kostka.x - p_kostka.x)
+    szerokosc_barkow = max(0.08, abs(l_ramie.x - p_ramie.x))
+    
+    rozstawienie = dystans_kostek / szerokosc_barkow
+    wynik['rozstawienie_stop'] = rozstawienie
+    # Znacznie poluzowane zasady dla stóp
+    wynik['rozstawienie_ok'] = 0.6 <= rozstawienie <= 1.6
+    
+    srodek_stop = (l_kostka.x + p_kostka.x) / 2
+    srodek_bioder = (l_biodro.x + p_biodro.x) / 2
+    
+    balans_diff = srodek_bioder - srodek_stop
+    # Poluzowane zasady dla balansu ciężaru
+    if balans_diff > 0.25:
+        wynik['balans'] = 'ZA_LEWO'
+    elif balans_diff < -0.25:
+        wynik['balans'] = 'ZA_PRAWO'
+    else:
+        wynik['balans'] = 'OK'
+        
+    return wynik
+
+
+def analizuj_faze(dane_front: dict, dane_bok: dict, dystans_pilka: float | None) -> dict:
+    faza = 'OCZEKIWANIE'
+    if dane_front.get('pilka_wykryta'):
+        if dystans_pilka is not None and dystans_pilka <= 200 and dane_front.get('typ_odbicia') is not None:
+            faza = 'KONTAKT'
+        elif dane_front.get('typ_odbicia') is not None and dystans_pilka is not None and dystans_pilka > PROG_PILKA_NADGARSTEK_PX:
+            faza = 'FOLLOW_THROUGH'
+        elif dystans_pilka is None or dystans_pilka > 200:
+            faza = 'PRZYGOTOWANIE'
+            
+    stopa_ok = dane_front.get('dane_stopy', {}).get('rozstawienie_ok', True) if dane_front else True
+    
+    kat_kolana = dane_bok.get('kat_kolana')
+    kolana_ok = True if kat_kolana is not None and KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX else False
+    
+    platforma_ok = dane_front.get('nadgarstki_zlaczone', False) if dane_front else False
+    ruch_ok = dane_bok.get('zamach_wykryty', False) if faza == 'KONTAKT' else True
+
+    gotowosc = {
+        'stopa_ok': stopa_ok,
+        'kolana_ok': kolana_ok,
+        'platforma_ok': platforma_ok,
+        'ruch_ok': ruch_ok
+    }
+    
+    if faza == 'OCZEKIWANIE':
+        feedback = 'Świetna pozycja wyjściowa! ✓' if all(gotowosc.values()) else 'Przyjmij swobodną pozycję gotowości'
+    elif faza == 'PRZYGOTOWANIE':
+        bledy = []
+        dobre = []
+        if not stopa_ok:
+            bledy.append('Popraw stopy')
+        else:
+            dobre.append('Stopy OK')
+            
+        if not kolana_ok:
+            bledy.append('Ugnij kolana')
+        else:
+            dobre.append('Kolana OK')
+            
+        if not platforma_ok:
+            bledy.append('Złącz dłonie')
+        
+        if not bledy:
+            feedback = 'Piłka w drodze — piękna pozycja! ✓'
+        else:
+            pozytyw = dobre[0] + ' ✓, ' if dobre else ''
+            feedback = f"Piłka leci! {pozytyw}{', '.join(bledy)}."
+    elif faza == 'KONTAKT':
+        feedback = 'Prawidłowe odbicie! ✓' if all(gotowosc.values()) else 'Odbicie!'
+    else:
+        feedback = 'Dobra robota! Wróć do pozycji ✓' if all(gotowosc.values()) else 'Kontroluj pozycję po odbiciu'
+
+    return {
+        'faza': faza,
+        'gotowosc': gotowosc,
+        'feedback_fazy': feedback
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. ANALIZA KAMERY BOCZNEJ
 # ─────────────────────────────────────────────────────────────────────────────
@@ -316,7 +418,22 @@ def analizuj_bok(punkty: dict, wrist_tracker: Optional["WristTrajectoryTracker"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. FUZJA SENSORÓW (Dual-Cam)
+# 3. FUZJA SENSORÓW (Dual-Cam) — pomocnicze funkcje gradientowe
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _gradient_kolana(kat: float) -> int:
+    """Gradientowa ocena kąta kolanowego: 0–25 pkt."""
+    if kat is None:
+        return 0
+    if 100.0 <= kat <= 140.0:
+        return 25  # optymalny zakres = pełne punkty
+    if kat < 80.0 or kat > 170.0:
+        return 0  # poza dopuszczalnym zakresem
+    if kat < 100.0:
+        return int(25 * (kat - 80.0) / 20.0)  # gradient 80→100
+    return int(25 * (170.0 - kat) / 30.0)  # gradient 140→170
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fuzja_sensorow(dane_front: dict, dane_bok: dict) -> dict:
@@ -382,17 +499,18 @@ def fuzja_sensorow(dane_front: dict, dane_bok: dict) -> dict:
         # +40 pkt: obie kamery potwierdziły kontakt (front + bok widzi ugięte kolana)
         punkty += WAGA_KONTAKT_POTWIERDZONY
 
-        # +25 pkt: prawidłowy kąt kolanowy
-        if kat_kolana is not None and KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX:
-            punkty += WAGA_KAT_KOLANOWY
+        # +0-25 pkt: gradient kąta kolanowego
+        punkty += _gradient_kolana(kat_kolana)
 
         # +20 pkt: złączone nadgarstki (platforma dolna)
         if nadgarstki_zlaczone:
             punkty += WAGA_NADGARSTKI_ZLACZONE
 
-        # +15 pkt: zamach wykryty → praca nóg przed kontaktem
+        # +5-15 pkt: praca nóg (częściowe punkty nawet bez pełnego zamachu)
         if zamach_wykryty:
             punkty += WAGA_ZAMACH_WYKRYTY
+        else:
+            punkty += 5  # częściowe punkty za pozycję
 
         wynik["ocena_fuzji"] = min(100, punkty)
 
@@ -414,9 +532,9 @@ def fuzja_sensorow(dane_front: dict, dane_bok: dict) -> dict:
         # Piłka w kadrze, ale brak kontaktu — oceniaj pozycję oczekiwania
         wynik["komunikat_fuzji"] = komunikat_kolana or "Przygotuj się do odbicia"
         if kat_kolana is not None and KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX:
-            wynik["ocena_fuzji"] = 35
+            wynik["ocena_fuzji"] = 40
         elif kat_kolana is not None and kat_kolana > KAT_KOLANO_ZA_WYSOKI:
-            wynik["ocena_fuzji"] = 10
+            wynik["ocena_fuzji"] = 20
             wynik["komunikat_fuzji"] = "Zbyt wysoka pozycja! Ugnij kolana!"
 
     return wynik

@@ -29,6 +29,8 @@ from logic.biomechanics import (
     analizuj_bok,
     fuzja_sensorow,
     WristTrajectoryTracker,
+    analizuj_stopy,
+    analizuj_faze,
 )
 from audio.voice_control import get_announcer
 from audio import speech_recognition as vosk_stt
@@ -176,6 +178,12 @@ global_metrics = {
     "dystansPilkaRece": None,       # odległość piłki od rąk (px)
     "zamachWykryty": False,         # czy wykryto zamach
     "dynamikaZamachu": None,        # opis dynamiki zamachu
+    # ── Pola analizy stóp i fazy ruchu ───────────────────────────────────────
+    "fazaRuchu": "OCZEKIWANIE",
+    "rozstawienieStop": None,
+    "balansStop": None,
+    "gotowoscPrzedOdbiciem": None,
+    "feedbackFazy": None,
 }
 
 yolo_model = YOLO(os.getenv("YOLO_MODEL_PATH", "yolov8n.pt"))
@@ -428,6 +436,11 @@ def build_body_points(landmarks):
         # Punkty dodatkowe dla biomechanics.py (analizuj_front — detekcja odbicia górnego)
         "lewe_oko": landmarks[mp_pose.PoseLandmark.LEFT_EYE.value],
         "prawe_oko": landmarks[mp_pose.PoseLandmark.RIGHT_EYE.value],
+        # Punkty stóp dla analizuj_stopy()
+        "lewa_stopa": landmarks[mp_pose.PoseLandmark.LEFT_FOOT_INDEX.value],
+        "prawa_stopa": landmarks[mp_pose.PoseLandmark.RIGHT_FOOT_INDEX.value],
+        "lewa_pieta": landmarks[mp_pose.PoseLandmark.LEFT_HEEL.value],
+        "prawa_pieta": landmarks[mp_pose.PoseLandmark.RIGHT_HEEL.value],
     }
 
 
@@ -1089,11 +1102,15 @@ def stream_camera_frames(capture_source, current_source):
         bio_front = {}
         bio_bok = {}
 
+        dane_stopy = {}
         if camera_mode == "front" and metrics.get("hasPose"):
             _bp = metrics.get("_bodyPoints", {})
             _ball_positions = metrics.get("_ballCenters", [])  # Z analyze_frame — BEZ drugiego YOLO
             if _bp:
                 bio_front = analizuj_front(_bp, _ball_positions, analyzed_frame.shape)
+                # Analiza stóp (kamera frontowa)
+                dane_stopy = analizuj_stopy(_bp)
+                bio_front['dane_stopy'] = dane_stopy
 
         # ── INTEGRACJA BIOMECHANIKI: kamera boczna ───────────────────────────
         elif camera_mode == "side" and metrics.get("hasPose"):
@@ -1102,6 +1119,10 @@ def stream_camera_frames(capture_source, current_source):
                 bio_bok = analizuj_bok(_bp, wrist_tracker)
                 metrics["komunikatKolana"] = bio_bok.get("komunikat_kolana")
                 metrics["postureWarnings"] = bio_bok.get("komunikat_kolana")
+
+        # ── Analiza fazy ruchu ────────────────────────────────────────────────
+        dystans = bio_front.get('dystans_pilka_px') if bio_front else None
+        dane_fazy = analizuj_faze(bio_front or {}, bio_bok or {}, dystans)
 
         now = time.time()
         posture_warning = metrics.get("postureWarnings")
@@ -1127,6 +1148,14 @@ def stream_camera_frames(capture_source, current_source):
             published_metrics["katBiodra"] = bio_bok.get("kat_biodra")
             published_metrics["zamachWykryty"] = bio_bok.get("zamach_wykryty", False)
             published_metrics["dynamikaZamachu"] = bio_bok.get("dynamika_zamachu")
+
+        if dane_stopy:
+            published_metrics['rozstawienieStop'] = dane_stopy.get('rozstawienie_stop')
+            published_metrics['balansStop'] = dane_stopy.get('balans')
+        if dane_fazy:
+            published_metrics['fazaRuchu'] = dane_fazy.get('faza')
+            published_metrics['gotowoscPrzedOdbiciem'] = dane_fazy.get('gotowosc')
+            published_metrics['feedbackFazy'] = dane_fazy.get('feedback_fazy')
 
         published_metrics.pop("_bodyPoints", None)
         published_metrics.pop("_ballCenters", None)
@@ -1479,6 +1508,14 @@ def stream_dual_camera_frames(current_source):
         # PUNKT INTEGRACJI: wywołaj fuzja_sensorow() dla obu kamer
         wynik_fuzji = fuzja_sensorow(dane_front, dane_bok)
 
+        # ── Analiza stóp (z kamery frontowej) ────────────────────────────────
+        bp_front_latest = m_front.get('_bodyPoints', {})
+        dane_stopy = analizuj_stopy(bp_front_latest)
+
+        # ── Analiza fazy ruchu ────────────────────────────────────────────────
+        dystans = dane_front.get('dystans_pilka_px')
+        dane_fazy = analizuj_faze(dane_front, dane_bok, dystans)
+
         # Wybierz bazowe metryki (z kamery frontowej — tam jest piłka)
         if m_front.get("hasPose") or not m_bok.get("hasPose"):
             metrics = m_front
@@ -1519,6 +1556,11 @@ def stream_dual_camera_frames(current_source):
             status=wynik_fuzji["komunikat_fuzji"] or build_live_status(metrics),
             videoProcessingStatus="idle",
             videoProcessingProgress=0,
+            rozstawienieStop=dane_stopy.get('rozstawienie_stop') if dane_stopy else None,
+            balansStop=dane_stopy.get('balans') if dane_stopy else None,
+            fazaRuchu=dane_fazy.get('faza', 'OCZEKIWANIE') if dane_fazy else 'OCZEKIWANIE',
+            gotowoscPrzedOdbiciem=dane_fazy.get('gotowosc') if dane_fazy else None,
+            feedbackFazy=dane_fazy.get('feedback_fazy') if dane_fazy else None,
         )
 
         # ── Minimalny overlay — reszta trafia do GUI HUD przez WebSocket ─────
