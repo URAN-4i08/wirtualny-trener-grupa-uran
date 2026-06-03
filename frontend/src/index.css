@@ -113,3 +113,12 @@
   border: 2px solid white;
   transition: left 0.3s ease, background-color 0.3s ease;
 }
+
+/* Ukryj scrollbar ale pozwól przewijać */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

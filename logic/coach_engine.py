@@ -24,10 +24,10 @@ class VolleyballPostureEvaluator:
     def __init__(
         self,
         ema_alpha: float = 0.35,
-        knee_straight_on: float = 176.0,   # Poszerzono margines (poluzowano)
-        knee_straight_off: float = 170.0,  # Poszerzono margines (poluzowano)
-        knee_low_on: float = 42.0,         # Poszerzono margines (poluzowano)
-        knee_low_off: float = 52.0,        # Poszerzono margines (poluzowano)
+        knee_straight_on: float = 180.0,   # Praktycznie nigdy nie ostrzega
+        knee_straight_off: float = 178.0,  # Bardzo wybaczające
+        knee_low_on: float = 35.0,         # Dopiero przy bardzo głębokim kucaniu
+        knee_low_off: float = 45.0,        # Bardzo wybaczające
         elbow_warn_on: float = 140.0,      # Poluzowano wymóg wyprostowanych rąk
         elbow_warn_off: float = 148.0,     # Poluzowano wymóg wyprostowanych rąk
         hands_warn_on: float = 0.38,       # Poluzowano wymóg złączonych dłoni
