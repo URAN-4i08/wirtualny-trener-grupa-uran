@@ -191,12 +191,12 @@ mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 pose_tracker = None
 
-LIVE_STREAM_FPS = int(os.getenv("LIVE_STREAM_FPS", "20"))
-LIVE_STREAM_WIDTH = int(os.getenv("LIVE_STREAM_WIDTH", "960"))
-LIVE_ANALYSIS_WIDTH = int(os.getenv("LIVE_ANALYSIS_WIDTH", "640"))
+LIVE_STREAM_FPS = int(os.getenv("LIVE_STREAM_FPS", "25"))
+LIVE_STREAM_WIDTH = int(os.getenv("LIVE_STREAM_WIDTH", "640"))
+LIVE_ANALYSIS_WIDTH = int(os.getenv("LIVE_ANALYSIS_WIDTH", "480"))
 LIVE_POSE_EVERY_N_FRAMES = int(os.getenv("LIVE_POSE_EVERY_N_FRAMES", "1"))
-# Piłkę wykrywamy CO KLATKĘ — jest szybka, nie można jej przegapić
-LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "1"))
+# Piłkę wykrywamy co 2. klatkę — kompromis szybkość vs detekcja
+LIVE_BALL_EVERY_N_FRAMES = int(os.getenv("LIVE_BALL_EVERY_N_FRAMES", "2"))
 LIVE_NO_POSE_GRACE_FRAMES = int(os.getenv("LIVE_NO_POSE_GRACE_FRAMES", "4"))
 LIVE_POSE_HOLD_FRAMES = int(os.getenv("LIVE_POSE_HOLD_FRAMES", "10"))
 LIVE_POSE_SMOOTH_ALPHA = float(os.getenv("LIVE_POSE_SMOOTH_ALPHA", "0.35"))
@@ -981,6 +981,9 @@ def stream_camera_frames(capture_source, current_source):
       "front" → analizuj_front() + detekcja piłki (bbox "PIŁKA" na klatce)
       "side"  → analizuj_bok() + WristTrajectoryTracker (zamach)
     """
+    # Krótka pauza na zwolnienie zasobów kamery po poprzedniej sesji
+    time.sleep(0.3)
+    
     try:
         live_pose_tracker = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
     except Exception as error:
@@ -1197,7 +1200,7 @@ def stream_camera_frames(capture_source, current_source):
             cv2.rectangle(overlay, (0, h_f - 6), (w_f, h_f), (0, 220, 80), -1)
             cv2.addWeighted(overlay, 0.7, analyzed_frame, 0.3, 0, analyzed_frame)
 
-        ret, buffer = cv2.imencode(".jpg", analyzed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
+        ret, buffer = cv2.imencode(".jpg", analyzed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
         if not ret:
             continue
 
@@ -1304,16 +1307,18 @@ def _draw_ball_labels(frame, ball_centers):
 def stream_dual_camera_frames(current_source):
     """
     Pętla Dual-Cam z synchronizacją Queue i fuzją biomechaniczną.
-
-    Architektura:
-      Wątek A (kamera frontowa) → kolejka_front (maxsize=1) → środki piłek + szkielet
-      Wątek B (kamera boczna)  → kolejka_bok  (maxsize=1) → kąty stawów + zamach
-      Wątek główny (generator) → pobiera z obu kolejek → fuzja_sensorow() → GUI
-
-    Queue(maxsize=1) + put_nowait() = szybsza kamera nie blokuje GUI —
-    po prostu nadpisuje klatkę, wolniejsza blokuje z timeout=0.08s.
     """
     import queue as _queue
+    import numpy as np
+
+    # ── KLUCZOWE: natychmiast wyślij klatkę "ładowania" ──────────────────────
+    # Bez tego przeglądarka zrywa połączenie MJPEG bo generator milczy 2+ sekundy
+    loading_frame = np.zeros((360, 960, 3), dtype=np.uint8)
+    cv2.putText(loading_frame, "Dual-Cam: inicjalizacja kamer...", (80, 180),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2, cv2.LINE_AA)
+    ret_l, buf_l = cv2.imencode(".jpg", loading_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    if ret_l:
+        yield (b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + buf_l.tobytes() + b"\r\n")
 
     cam_a = int(current_source.get("cameraIndex") or 0)
     cam_b = current_source.get("cameraIndex2")
@@ -1321,30 +1326,53 @@ def stream_dual_camera_frames(current_source):
         update_metrics(isAnalyzing=False, status="Brak drugiej kamery", warnings="Brak drugiej kamery", source="camera")
         return
 
+    print(f"[DUAL-CAM] Start: cam_a={cam_a}, cam_b={cam_b}")
+
+    # Krótka pauza na zwolnienie zasobów po poprzedniej sesji
+    time.sleep(0.3)
+
     # ── Inicjalizacja kamer ──────────────────────────────────────────────────
-    if sys.platform == "darwin":
-        camera1 = cv2.VideoCapture(cam_a, cv2.CAP_AVFOUNDATION)
-        camera2 = cv2.VideoCapture(int(cam_b), cv2.CAP_AVFOUNDATION)
+    print(f"[DUAL-CAM] Otwieranie kamery A (indeks {cam_a})...")
+    camera1 = cv2.VideoCapture(cam_a, cv2.CAP_AVFOUNDATION) if sys.platform == "darwin" else cv2.VideoCapture(cam_a)
+
+    time.sleep(0.5)
+    if camera1.isOpened():
+        camera1.read()
+        print(f"[DUAL-CAM] Kamera A ({cam_a}) OK")
     else:
-        camera1 = cv2.VideoCapture(cam_a)
-        camera2 = cv2.VideoCapture(int(cam_b))
+        print(f"[DUAL-CAM] Kamera A ({cam_a}) FAIL!")
+
+    print(f"[DUAL-CAM] Otwieranie kamery B (indeks {cam_b})...")
+    camera2 = cv2.VideoCapture(int(cam_b), cv2.CAP_AVFOUNDATION) if sys.platform == "darwin" else cv2.VideoCapture(int(cam_b))
+    if camera2.isOpened():
+        print(f"[DUAL-CAM] Kamera B ({cam_b}) OK")
+    else:
+        print(f"[DUAL-CAM] Kamera B ({cam_b}) FAIL!")
 
     for cam in (camera1, camera2):
-        cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cam.set(cv2.CAP_PROP_FRAME_WIDTH, LIVE_STREAM_WIDTH)
-        cam.set(cv2.CAP_PROP_FPS, LIVE_STREAM_FPS)
+        if cam.isOpened():
+            cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cam.set(cv2.CAP_PROP_FRAME_WIDTH, LIVE_STREAM_WIDTH)
+            cam.set(cv2.CAP_PROP_FPS, LIVE_STREAM_FPS)
 
     if not camera1.isOpened() or not camera2.isOpened():
-        update_metrics(
-            isAnalyzing=False,
-            status="Nie mozna otworzyc dwoch kamer",
-            warnings="Nie mozna otworzyc dwoch kamer",
-            postureWarnings="Nie mozna otworzyc dwoch kamer",
-            source="camera",
-        )
+        a_ok, b_ok = camera1.isOpened(), camera2.isOpened()
+        err_msg = f"Blad: Kam A({'OK' if a_ok else 'FAIL'}) B({'OK' if b_ok else 'FAIL'})"
+        print(f"[DUAL-CAM] {err_msg}")
+        update_metrics(isAnalyzing=False, status=err_msg, warnings=err_msg, source="camera")
+        err_frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        cv2.putText(err_frame, err_msg, (20, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        ret_e, buf_e = cv2.imencode(".jpg", err_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        if ret_e:
+            fb = b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + buf_e.tobytes() + b"\r\n"
+            for _ in range(50):
+                yield fb
+                time.sleep(0.1)
         camera1.release()
         camera2.release()
         return
+
+    print("[DUAL-CAM] Obie kamery otwarte — uruchamiam watki analizy...")
 
     # ── Kolejki synchronizacji (maxsize=1 = nie blokuje GUI) ────────────────
     # Kamera A = frontowa, Kamera B = boczna
@@ -1530,38 +1558,37 @@ def stream_dual_camera_frames(current_source):
         # etykiet, alertów — w zależności od implementacji frontendu.
         komunikat_kontaktu = None
         if wynik_fuzji.get("brak_pracy_nog"):
-            # BŁĄD KRYTYCZNY: odbicie bez pracy nóg
-            komunikat_kontaktu = "Odbicie wykonane samymi rękami! Brak pracy nóg!"
+            komunikat_kontaktu = "Odbicie OK — spróbuj zaangażować nogi!"
 
         metrics.pop("_bodyPoints", None)
         metrics.pop("_ballCenters", None)
 
-        update_metrics(
-            **metrics,
-            # Biomechaniczne pola fuzji
-            score=wynik_fuzji["ocena_fuzji"],           # → ProgressBar
-            fuzjaOcena=wynik_fuzji["ocena_fuzji"],      # → ProgressBar (alias)
-            postureWarnings=wynik_fuzji["komunikat_fuzji"],  # → pole tekstowe
-            warnings=wynik_fuzji["komunikat_fuzji"],
-            contactWarning=komunikat_kontaktu,           # → alert GUI
-            brakPracyNog=wynik_fuzji["brak_pracy_nog"],  # → czerwony alert
-            typOdbicia=wynik_fuzji["typ_odbicia"],       # → etykieta GUI
-            komunikatKolana=dane_bok.get("komunikat_kolana"),
-            katBiodra=dane_bok.get("kat_biodra"),
-            zamachWykryty=dane_bok.get("zamach_wykryty", False),
-            dynamikaZamachu=dane_bok.get("dynamika_zamachu"),
-            dystansPilkaRece=dane_front.get("dystans_pilka_px"),
-            isContact=bool(wynik_fuzji.get("typ_odbicia")),
-            cameraMode="dual",
-            status=wynik_fuzji["komunikat_fuzji"] or build_live_status(metrics),
-            videoProcessingStatus="idle",
-            videoProcessingProgress=0,
-            rozstawienieStop=dane_stopy.get('rozstawienie_stop') if dane_stopy else None,
-            balansStop=dane_stopy.get('balans') if dane_stopy else None,
-            fazaRuchu=dane_fazy.get('faza', 'OCZEKIWANIE') if dane_fazy else 'OCZEKIWANIE',
-            gotowoscPrzedOdbiciem=dane_fazy.get('gotowosc') if dane_fazy else None,
-            feedbackFazy=dane_fazy.get('feedback_fazy') if dane_fazy else None,
-        )
+        metrics.update({
+            "score": wynik_fuzji["ocena_fuzji"],
+            "fuzjaOcena": wynik_fuzji["ocena_fuzji"],
+            "postureWarnings": wynik_fuzji["komunikat_fuzji"],
+            "warnings": wynik_fuzji["komunikat_fuzji"],
+            "contactWarning": komunikat_kontaktu,
+            "brakPracyNog": wynik_fuzji["brak_pracy_nog"],
+            "typOdbicia": wynik_fuzji["typ_odbicia"],
+            "komunikatKolana": dane_bok.get("komunikat_kolana"),
+            "katBiodra": dane_bok.get("kat_biodra"),
+            "zamachWykryty": dane_bok.get("zamach_wykryty", False),
+            "dynamikaZamachu": dane_bok.get("dynamika_zamachu"),
+            "dystansPilkaRece": dane_front.get("dystans_pilka_px"),
+            "isContact": bool(wynik_fuzji.get("typ_odbicia")),
+            "cameraMode": "dual",
+            "status": wynik_fuzji["komunikat_fuzji"] or build_live_status(metrics),
+            "videoProcessingStatus": "idle",
+            "videoProcessingProgress": 0,
+            "rozstawienieStop": dane_stopy.get('rozstawienie_stop') if dane_stopy else None,
+            "balansStop": dane_stopy.get('balans') if dane_stopy else None,
+            "fazaRuchu": dane_fazy.get('faza', 'OCZEKIWANIE') if dane_fazy else 'OCZEKIWANIE',
+            "gotowoscPrzedOdbiciem": dane_fazy.get('gotowosc') if dane_fazy else None,
+            "feedbackFazy": dane_fazy.get('feedback_fazy') if dane_fazy else None,
+        })
+        
+        update_metrics(**metrics)
 
         # ── Minimalny overlay — reszta trafia do GUI HUD przez WebSocket ─────
         # Kamera frontowa: mały dot statusu w górnym rogu
@@ -1606,7 +1633,7 @@ def stream_dual_camera_frames(current_source):
 
         combined = cv2.hconcat([frame_front, frame_bok])
 
-        ret, buffer = cv2.imencode(".jpg", combined, [int(cv2.IMWRITE_JPEG_QUALITY), 78])
+        ret, buffer = cv2.imencode(".jpg", combined, [int(cv2.IMWRITE_JPEG_QUALITY), 68])
         if not ret:
             continue
 
@@ -1817,6 +1844,18 @@ async def upload_video(
 @app.get("/video_feed")
 def video_feed():
     return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.get("/video_feed_dual")
+def video_feed_dual():
+    """Osobny endpoint dla Dual-Cam — unika blokowania wątku przez single-cam."""
+    current_source = snapshot_source()
+    if current_source["mode"] != "camera_dual":
+        return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(
+        stream_dual_camera_frames(current_source),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @app.get("/api/voice/status")

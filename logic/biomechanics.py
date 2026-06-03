@@ -25,11 +25,11 @@ PROG_NADGARSTKI_ZLACZONE = 0.20        # znorm. odległość między nadgarstkam
 PROG_ODBICIE_GORNE_KAT_MIN = 70.0     # min kąt łokcia przy odbiciu górnym (poluzowano)
 PROG_ODBICIE_GORNE_KAT_MAX = 140.0    # max kąt łokcia przy odbiciu górnym (poluzowano)
 
-# Kamera boczna — kolana
-KAT_KOLANO_PRAWIDLOWY_MIN = 80.0      # dolna granica prawidłowego ugięcia (poluzowano)
-KAT_KOLANO_PRAWIDLOWY_MAX = 160.0     # górna granica prawidłowego ugięcia (poluzowano)
-KAT_KOLANO_ZA_WYSOKI = 170.0          # powyżej → "Zbyt wysoka pozycja!" (poluzowano)
-KAT_KOLANO_ZA_NISKI = 50.0            # poniżej → "Zbyt głęboka pozycja!" (poluzowano)
+# Kamera boczna — kolana (bardzo wybaczające)
+KAT_KOLANO_PRAWIDLOWY_MIN = 70.0      # dolna granica prawidłowego ugięcia
+KAT_KOLANO_PRAWIDLOWY_MAX = 175.0     # górna granica — prawie stojąc uznaje za OK
+KAT_KOLANO_ZA_WYSOKI = 178.0          # dopiero przy prawie wyprostowanych nogach
+KAT_KOLANO_ZA_NISKI = 40.0            # dopiero przy bardzo głębokim kucnięciu
 
 # Kamera boczna — zamach nadgarstka
 ZAMACH_HISTORIA_KLATEK = 12           # długość bufora historii Y nadgarstka
@@ -273,7 +273,19 @@ def analizuj_faze(dane_front: dict, dane_bok: dict, dystans_pilka: float | None)
     elif faza == 'KONTAKT':
         feedback = 'Prawidłowe odbicie! ✓' if all(gotowosc.values()) else 'Odbicie!'
     else:
-        feedback = 'Dobra robota! Wróć do pozycji ✓' if all(gotowosc.values()) else 'Kontroluj pozycję po odbiciu'
+        # FOLLOW_THROUGH — podsumowanie po odbiciu: co było źle
+        problemy = []
+        if not stopa_ok:
+            problemy.append('stopy za blisko')
+        if not kolana_ok:
+            problemy.append('popraw ugięcie kolan')
+        if not platforma_ok:
+            problemy.append('złącz dłonie mocniej')
+        
+        if not problemy:
+            feedback = 'Poprawne odbicie! Świetna robota ✓'
+        else:
+            feedback = f"Odbicie OK — popraw: {', '.join(problemy)}"
 
     return {
         'faza': faza,
@@ -422,16 +434,16 @@ def analizuj_bok(punkty: dict, wrist_tracker: Optional["WristTrajectoryTracker"]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _gradient_kolana(kat: float) -> int:
-    """Gradientowa ocena kąta kolanowego: 0–25 pkt."""
+    """Gradientowa ocena kąta kolanowego: 0–25 pkt (bardzo wybaczająca)."""
     if kat is None:
-        return 0
-    if 100.0 <= kat <= 140.0:
-        return 25  # optymalny zakres = pełne punkty
-    if kat < 80.0 or kat > 170.0:
-        return 0  # poza dopuszczalnym zakresem
-    if kat < 100.0:
-        return int(25 * (kat - 80.0) / 20.0)  # gradient 80→100
-    return int(25 * (170.0 - kat) / 30.0)  # gradient 140→170
+        return 12  # nawet bez danych — częściowe punkty
+    if 90.0 <= kat <= 155.0:
+        return 25  # szeroki optymalny zakres = pełne punkty
+    if kat < 50.0 or kat > 178.0:
+        return 5   # nawet ekstremalny kąt → trochę punktów
+    if kat < 90.0:
+        return int(5 + 20 * (kat - 50.0) / 40.0)   # gradient 50→90 (5→25)
+    return int(5 + 20 * (178.0 - kat) / 23.0)       # gradient 155→178 (25→5)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -487,54 +499,60 @@ def fuzja_sensorow(dane_front: dict, dane_bok: dict) -> dict:
     # ── Ocena gdy jest kontakt z piłką ───────────────────────────────────────
     if kontakt_front:
         # Sprawdź błąd krytyczny: odbicie bez pracy nóg
+        # (ale nawet wtedy daj trochę punktów — gracz próbuje!)
         if kolana_proste:
             wynik["brak_pracy_nog"] = True
-            wynik["komunikat_fuzji"] = "Odbicie wykonane samymi rękami! Brak pracy nóg!"
-            wynik["ocena_fuzji"] = max(0, 100 - WAGA_ZAMACH_WYKRYTY - WAGA_KAT_KOLANOWY)
+            wynik["komunikat_fuzji"] = "Odbicie OK! Spróbuj bardziej zaangażować nogi."
+            wynik["ocena_fuzji"] = 55  # wciąż pozytywna ocena
             return wynik
 
-        # Normalne odbicie — sumuj punkty
-        punkty = 0
+        # Normalne odbicie — sumuj punkty (bazowe 10 pkt na start)
+        punkty = 10
 
         # +40 pkt: obie kamery potwierdziły kontakt (front + bok widzi ugięte kolana)
         punkty += WAGA_KONTAKT_POTWIERDZONY
 
-        # +0-25 pkt: gradient kąta kolanowego
+        # +5-25 pkt: gradient kąta kolanowego (bardzo łagodny)
         punkty += _gradient_kolana(kat_kolana)
 
         # +20 pkt: złączone nadgarstki (platforma dolna)
         if nadgarstki_zlaczone:
             punkty += WAGA_NADGARSTKI_ZLACZONE
+        else:
+            punkty += 8  # częściowe punkty nawet bez idealnej platformy
 
         # +5-15 pkt: praca nóg (częściowe punkty nawet bez pełnego zamachu)
         if zamach_wykryty:
             punkty += WAGA_ZAMACH_WYKRYTY
         else:
-            punkty += 5  # częściowe punkty za pozycję
+            punkty += 8  # więcej częściowych punktów za pozycję
 
         wynik["ocena_fuzji"] = min(100, punkty)
 
-        if punkty >= 90:
-            wynik["komunikat_fuzji"] = f"Doskonałe odbicie {typ_odbicia}! ({punkty}/100)"
-        elif punkty >= 70:
-            wynik["komunikat_fuzji"] = f"Dobre odbicie {typ_odbicia} ({punkty}/100)"
-        else:
-            problemy = []
-            if kat_kolana is None or not (KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX):
-                problemy.append(komunikat_kolana)
+        # Bardzo pozytywne komunikaty — system chwali gracza
+        if punkty >= 85:
+            wynik["komunikat_fuzji"] = f"Doskonałe odbicie {typ_odbicia}! ✓ ({punkty}/100)"
+        elif punkty >= 65:
+            wynik["komunikat_fuzji"] = f"Poprawne odbicie {typ_odbicia} ✓ ({punkty}/100)"
+        elif punkty >= 50:
+            # Nawet przy średnim wyniku — głównie pozytywny feedback + delikatna wskazówka
+            wskazowka = ""
             if not nadgarstki_zlaczone:
-                problemy.append("Złącz dłonie!")
-            if not zamach_wykryty:
-                problemy.append("Więcej pracy nóg!")
-            wynik["komunikat_fuzji"] = " | ".join(problemy) if problemy else f"Odbicie {typ_odbicia} ({punkty}/100)"
+                wskazowka = " — spróbuj złączyć dłonie"
+            elif not zamach_wykryty:
+                wskazowka = " — więcej pracy nóg"
+            wynik["komunikat_fuzji"] = f"Dobre odbicie {typ_odbicia}{wskazowka} ({punkty}/100)"
+        else:
+            wynik["komunikat_fuzji"] = f"Odbicie {typ_odbicia} — pracuj nad techniką ({punkty}/100)"
 
     else:
-        # Piłka w kadrze, ale brak kontaktu — oceniaj pozycję oczekiwania
-        wynik["komunikat_fuzji"] = komunikat_kolana or "Przygotuj się do odbicia"
+        # Piłka w kadrze, ale brak kontaktu — oceniaj pozycję oczekiwania (pozytywnie!)
+        wynik["komunikat_fuzji"] = komunikat_kolana or "Dobra pozycja — piłka leci!"
         if kat_kolana is not None and KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX:
-            wynik["ocena_fuzji"] = 40
+            wynik["ocena_fuzji"] = 50
+            wynik["komunikat_fuzji"] = "Świetna pozycja do odbicia! ✓"
         elif kat_kolana is not None and kat_kolana > KAT_KOLANO_ZA_WYSOKI:
-            wynik["ocena_fuzji"] = 20
-            wynik["komunikat_fuzji"] = "Zbyt wysoka pozycja! Ugnij kolana!"
+            wynik["ocena_fuzji"] = 30
+            wynik["komunikat_fuzji"] = "Spróbuj lekko ugiąć kolana"
 
     return wynik
