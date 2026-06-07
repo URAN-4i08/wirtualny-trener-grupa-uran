@@ -20,8 +20,8 @@ from typing import Optional
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Kamera frontowa
-PROG_PILKA_NADGARSTEK_PX = 110         # odległość px piłki od nadgarstka → odbicie (poluzowano)
-PROG_NADGARSTKI_ZLACZONE = 0.20        # znorm. odległość między nadgarstkami → "złączone" (poluzowano)
+PROG_PILKA_NADGARSTEK_PX = 180         # odległość px piłki od nadgarstka → odbicie (bardzo luźny)
+PROG_NADGARSTKI_ZLACZONE = 0.25        # znorm. odległość między nadgarstkami → "złączone" (zbalansowane)
 PROG_ODBICIE_GORNE_KAT_MIN = 70.0     # min kąt łokcia przy odbiciu górnym (poluzowano)
 PROG_ODBICIE_GORNE_KAT_MAX = 140.0    # max kąt łokcia przy odbiciu górnym (poluzowano)
 
@@ -141,20 +141,30 @@ def analizuj_front(punkty: dict, pilka: list, frame_shape: tuple) -> dict:
 
     # Znajdź piłkę najbliżej rąk
     min_dist = None
+    min_dist_cy = 0
     for cx, cy in pilka:
         d_l = _odleglosc_px(cx, cy, l_nadgarstek, frame_shape)
         d_p = _odleglosc_px(cx, cy, p_nadgarstek, frame_shape)
         d = min(d_l, d_p)
         if min_dist is None or d < min_dist:
             min_dist = d
+            min_dist_cy = cy
 
     wynik["dystans_pilka_px"] = round(min_dist, 1) if min_dist is not None else None
 
-    # ── Detekcja ODBICIA DOLNEGO ─────────────────────────────────────────────
-    # Warunek: piłka blisko nadgarstków ORAZ nadgarstki złączone
-    if min_dist is not None and min_dist < PROG_PILKA_NADGARSTEK_PX and zlaczone:
-        wynik["typ_odbicia"] = "DOLNE"
-        return wynik
+    # ── Detekcja ODBICIA DOLNEGO ─────────────────────────────────────────
+    # Warunek: piłka blisko nadgarstków (złączone = bonus, nie wymag.)
+    if min_dist is not None and min_dist < PROG_PILKA_NADGARSTEK_PX:
+        # Piłka jest poniżej oczu → odbicie dolne
+        srodek_nadg_y = (l_nadgarstek.y + p_nadgarstek.y) / 2
+        linia_oczu_y = None
+        if l_oko is not None and p_oko is not None:
+            linia_oczu_y = (l_oko.y + p_oko.y) / 2
+        # Piłka przy rękach poniżej oczu LUB nadgarstki złączone = DOLNE
+        pilka_nisko = linia_oczu_y is None or (min_dist_cy / frame_shape[0]) > (linia_oczu_y - 0.05)
+        if zlaczone or pilka_nisko:
+            wynik["typ_odbicia"] = "DOLNE"
+            return wynik
 
     # ── Detekcja ODBICIA GÓRNEGO ─────────────────────────────────────────────
     # Warunek: piłka powyżej oczu + bliskość nadgarstków + kąt łokcia 90–120°
@@ -222,21 +232,54 @@ def analizuj_stopy(punkty: dict) -> dict:
     return wynik
 
 
-def analizuj_faze(dane_front: dict, dane_bok: dict, dystans_pilka: float | None) -> dict:
+def analizuj_faze(
+    dane_front: dict,
+    dane_bok: dict,
+    dystans_pilka: float | None,
+    kat_kolana_front: float | None = None,
+    ostatnie_odbicie: dict | None = None,
+) -> dict:
+    """
+    Analiza fazy ruchu z obsługą pamięci ostatniego odbicia.
+
+    Parametry
+    ----------
+    dane_front         : wynik analizuj_front()
+    dane_bok           : wynik analizuj_bok()
+    dystans_pilka      : odległość piłki od rąk (px)
+    kat_kolana_front   : kąt kolan z MediaPipe (działa na każdej kamerze)
+    ostatnie_odbicie   : dict z pamięcią ostatniego odbicia z server.py:
+                         {'typ': 'DOLNE', 'czas': float, 'gotowosc': {...}, 'feedback': str}
+                         Jeśli minęło < FOLLOW_THROUGH_SEC → faza = FOLLOW_THROUGH
+    """
+    import time as _time
+
+    FOLLOW_THROUGH_SEC = 3.0  # jak długo pokazywać podsumowanie po odbiciu
+
+    # ── Określ fazę ruchu ────────────────────────────────────────────────────
     faza = 'OCZEKIWANIE'
-    if dane_front.get('pilka_wykryta'):
+
+    # Priorytet 1: Czy mamy zapamiętane odbicie z ostatnich 3 sekund?
+    if ostatnie_odbicie and (_time.time() - ostatnie_odbicie.get('czas', 0)) < FOLLOW_THROUGH_SEC:
+        faza = 'FOLLOW_THROUGH'
+    elif dane_front.get('pilka_wykryta'):
         if dystans_pilka is not None and dystans_pilka <= 200 and dane_front.get('typ_odbicia') is not None:
             faza = 'KONTAKT'
-        elif dane_front.get('typ_odbicia') is not None and dystans_pilka is not None and dystans_pilka > PROG_PILKA_NADGARSTEK_PX:
-            faza = 'FOLLOW_THROUGH'
         elif dystans_pilka is None or dystans_pilka > 200:
             faza = 'PRZYGOTOWANIE'
-            
+
+    # ── Checklist gotowości ──────────────────────────────────────────────────
     stopa_ok = dane_front.get('dane_stopy', {}).get('rozstawienie_ok', True) if dane_front else True
-    
+
+    # Kolana: używaj kamery bocznej → frontu → domyślnie OK
     kat_kolana = dane_bok.get('kat_kolana')
-    kolana_ok = True if kat_kolana is not None and KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX else False
-    
+    if kat_kolana is not None:
+        kolana_ok = KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX
+    elif kat_kolana_front is not None:
+        kolana_ok = kat_kolana_front < 174.0  # przychylne — prawie każde ugięcie OK
+    else:
+        kolana_ok = True  # brak danych = nie karamy
+
     platforma_ok = dane_front.get('nadgarstki_zlaczone', False) if dane_front else False
     ruch_ok = dane_bok.get('zamach_wykryty', False) if faza == 'KONTAKT' else True
 
@@ -244,11 +287,26 @@ def analizuj_faze(dane_front: dict, dane_bok: dict, dystans_pilka: float | None)
         'stopa_ok': stopa_ok,
         'kolana_ok': kolana_ok,
         'platforma_ok': platforma_ok,
-        'ruch_ok': ruch_ok
+        'ruch_ok': ruch_ok,
     }
-    
-    if faza == 'OCZEKIWANIE':
-        feedback = 'Świetna pozycja wyjściowa! ✓' if all(gotowosc.values()) else 'Przyjmij swobodną pozycję gotowości'
+
+    # ── Feedback dla każdej fazy ─────────────────────────────────────────────
+    if faza == 'FOLLOW_THROUGH':
+        # Użyj zapamiętanego feedbacku z momentu odbicia
+        if ostatnie_odbicie:
+            feedback = ostatnie_odbicie.get('feedback', 'Odbicie zarejestrowane ✓')
+        else:
+            feedback = 'Kontroluj pozycję po odbiciu'
+        # Nadpisz gotowość danymi z momentu odbicia (jeśli dostępne)
+        if ostatnie_odbicie and ostatnie_odbicie.get('gotowosc'):
+            gotowosc = ostatnie_odbicie['gotowosc']
+
+    elif faza == 'OCZEKIWANIE':
+        if all(gotowosc.values()):
+            feedback = 'Świetna pozycja wyjściowa! ✓'
+        else:
+            feedback = 'Przyjmij swobodną pozycję gotowości'
+
     elif faza == 'PRZYGOTOWANIE':
         bledy = []
         dobre = []
@@ -273,7 +331,8 @@ def analizuj_faze(dane_front: dict, dane_bok: dict, dystans_pilka: float | None)
     elif faza == 'KONTAKT':
         feedback = 'Prawidłowe odbicie! ✓' if all(gotowosc.values()) else 'Odbicie!'
     else:
-        # FOLLOW_THROUGH — podsumowanie po odbiciu: co było źle
+        # FOLLOW_THROUGH — podsumowanie po odbiciu
+        # Bądź przychylny: pokaż zielono jeśli większość jest OK
         problemy = []
         if not stopa_ok:
             problemy.append('stopy za blisko')
@@ -284,6 +343,8 @@ def analizuj_faze(dane_front: dict, dane_bok: dict, dystans_pilka: float | None)
         
         if not problemy:
             feedback = 'Poprawne odbicie! Świetna robota ✓'
+        elif len(problemy) == 1:
+            feedback = f"Dobre odbicie! Wskazówka: {problemy[0]}"
         else:
             feedback = f"Odbicie OK — popraw: {', '.join(problemy)}"
 

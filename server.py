@@ -1058,6 +1058,9 @@ def stream_camera_frames(capture_source, current_source):
         "count_contact": 0
     }
 
+    # ── Pamięć ostatniego odbicia (FOLLOW_THROUGH przez 3s) ──────────────────
+    last_bounce = None  # {'typ': str, 'czas': float, 'gotowosc': dict, 'feedback': str}
+
     while True:
         latest_source = snapshot_source()
         if latest_source["mode"] != "camera" or latest_source["cameraIndex"] != current_source["cameraIndex"]:
@@ -1123,9 +1126,49 @@ def stream_camera_frames(capture_source, current_source):
                 metrics["komunikatKolana"] = bio_bok.get("komunikat_kolana")
                 metrics["postureWarnings"] = bio_bok.get("komunikat_kolana")
 
+        # ── Zapamiętaj odbicie (FOLLOW_THROUGH) ──────────────────────────────
+        if bio_front.get('typ_odbicia') and (last_bounce is None or time.time() - last_bounce.get('czas', 0) > 2.0):
+            # Inkrementuj licznik odbić — ZAWSZE (dobre i złe)
+            stats["contacts"] += 1
+            metrics["totalContacts"] = stats["contacts"]
+
+            # Zbalansowany feedback
+            problemy = []
+            knee = metrics.get('kneeAngle') or 0
+            if knee > 165:
+                problemy.append('ugnij kolana')
+            if not bio_front.get('nadgarstki_zlaczone', False):
+                problemy.append('złącz dłonie')
+
+            typ = bio_front['typ_odbicia']
+            if not problemy:
+                fb = f"Poprawne odbicie {typ}! ✓"
+            elif len(problemy) == 1:
+                fb = f"Odbicie {typ} — popraw: {problemy[0]}"
+            else:
+                fb = f"Odbicie {typ} — popraw: {', '.join(problemy)}"
+
+            gotowosc_snap = {
+                'stopa_ok': True,
+                'kolana_ok': knee <= 165,
+                'platforma_ok': bio_front.get('nadgarstki_zlaczone', False),
+                'ruch_ok': True,
+            }
+
+            last_bounce = {
+                'typ': typ,
+                'czas': time.time(),
+                'gotowosc': gotowosc_snap,
+                'feedback': fb,
+            }
+
         # ── Analiza fazy ruchu ────────────────────────────────────────────────
         dystans = bio_front.get('dystans_pilka_px') if bio_front else None
-        dane_fazy = analizuj_faze(bio_front or {}, bio_bok or {}, dystans)
+        dane_fazy = analizuj_faze(
+            bio_front or {}, bio_bok or {}, dystans,
+            kat_kolana_front=metrics.get('kneeAngle'),
+            ostatnie_odbicie=last_bounce,
+        )
 
         now = time.time()
         posture_warning = metrics.get("postureWarnings")
@@ -1137,15 +1180,20 @@ def stream_camera_frames(capture_source, current_source):
             **metrics,
             "postureWarnings": last_posture_hint,
             "warnings": last_posture_hint,
+            "totalContacts": stats["contacts"],
         }
 
         # Dodaj pola biomechaniczne do metryki publikowanej do GUI
         if bio_front:
             published_metrics["typOdbicia"] = bio_front.get("typ_odbicia")
             published_metrics["dystansPilkaRece"] = bio_front.get("dystans_pilka_px")
-            # Jeśli wykryto odbicie → zaktualizuj score i kontakt
             if bio_front.get("typ_odbicia"):
                 published_metrics["isContact"] = True
+
+        # Feedback po odbiciu (single-cam) — pokaż w FOLLOW_THROUGH
+        if last_bounce and dane_fazy and dane_fazy.get('faza') == 'FOLLOW_THROUGH':
+            published_metrics["typOdbicia"] = last_bounce['typ']
+            published_metrics["komunikatFuzji"] = last_bounce['feedback']
         if bio_bok:
             published_metrics["komunikatKolana"] = bio_bok.get("komunikat_kolana")
             published_metrics["katBiodra"] = bio_bok.get("kat_biodra")
@@ -1515,6 +1563,8 @@ def stream_dual_camera_frames(current_source):
     next_due = time.time()
     last_metrics = None
     no_pose_streak = 0
+    last_bounce = None  # pamięć ostatniego odbicia
+    dual_contact_count = 0
 
     # ── Pętla główna generatora (synchronizacja klatek z obu wątków) ─────────
     while True:
@@ -1542,7 +1592,49 @@ def stream_dual_camera_frames(current_source):
 
         # ── Analiza fazy ruchu ────────────────────────────────────────────────
         dystans = dane_front.get('dystans_pilka_px')
-        dane_fazy = analizuj_faze(dane_front, dane_bok, dystans)
+
+        # Zapamiętaj odbicie
+        if dane_front.get('typ_odbicia') and (last_bounce is None or time.time() - last_bounce.get('czas', 0) > 2.0):
+            dual_contact_count += 1
+
+            # Zbalansowany feedback (dual-cam ma więcej danych)
+            problemy = []
+            kat_k = dane_bok.get('kat_kolana')
+            if kat_k is not None and kat_k > 165:
+                problemy.append('ugnij kolana')
+            if not dane_front.get('nadgarstki_zlaczone', False):
+                problemy.append('złącz dłonie')
+            if dane_bok.get('kolana_proste', False):
+                if 'ugnij kolana' not in problemy:
+                    problemy.append('ugnij kolana')
+
+            typ = dane_front['typ_odbicia']
+            if not problemy:
+                fb = f"Poprawne odbicie {typ}! ✓"
+            elif len(problemy) == 1:
+                fb = f"Odbicie {typ} — popraw: {problemy[0]}"
+            else:
+                fb = f"Odbicie {typ} — popraw: {', '.join(problemy)}"
+
+            gotowosc_snap = {
+                'stopa_ok': True,
+                'kolana_ok': not dane_bok.get('kolana_proste', False),
+                'platforma_ok': dane_front.get('nadgarstki_zlaczone', False),
+                'ruch_ok': True,
+            }
+            last_bounce = {
+                'typ': typ,
+                'czas': time.time(),
+                'gotowosc': gotowosc_snap,
+                'feedback': fb,
+            }
+
+        kat_front = m_front.get('kneeAngle') if m_front else None
+        dane_fazy = analizuj_faze(
+            dane_front, dane_bok, dystans,
+            kat_kolana_front=kat_front,
+            ostatnie_odbicie=last_bounce,
+        )
 
         # Wybierz bazowe metryki (z kamery frontowej — tam jest piłka)
         if m_front.get("hasPose") or not m_bok.get("hasPose"):
@@ -1578,6 +1670,7 @@ def stream_dual_camera_frames(current_source):
             "dystansPilkaRece": dane_front.get("dystans_pilka_px"),
             "isContact": bool(wynik_fuzji.get("typ_odbicia")),
             "cameraMode": "dual",
+            "totalContacts": dual_contact_count,
             "status": wynik_fuzji["komunikat_fuzji"] or build_live_status(metrics),
             "videoProcessingStatus": "idle",
             "videoProcessingProgress": 0,
