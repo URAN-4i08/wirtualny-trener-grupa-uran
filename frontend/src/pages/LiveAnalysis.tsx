@@ -171,6 +171,7 @@ export default function LiveAnalysis() {
     selectedCameraIndex,
     selectedVideoName,
   );
+  const isFollowThrough = metrics.fazaRuchu === 'FOLLOW_THROUGH';
   const mainFeedback = (() => {
     if (!isAnalyzing) return metrics.postureWarnings || '—';
     if (!metrics.hasPose) return 'Stań w kadrze kamery, aby ocenić postawę';
@@ -493,71 +494,49 @@ export default function LiveAnalysis() {
         {/* ── HUD: Panel informacyjny ──────────────────────────────────── */}
         <div className="flex flex-col gap-3 overflow-y-auto scrollbar-hide">
 
-          {/* Faza ruchu — wyróżniony baner */}
-          <div className={clsx(
-            'glass-card p-4 rounded-2xl border-2 phase-indicator',
-            metrics.fazaRuchu === 'OCZEKIWANIE' && 'phase-oczekiwanie',
-            metrics.fazaRuchu === 'PRZYGOTOWANIE' && 'phase-przygotowanie',
-            metrics.fazaRuchu === 'KONTAKT' && 'phase-kontakt',
-            metrics.fazaRuchu === 'FOLLOW_THROUGH' && 'phase-follow-through',
-            !metrics.fazaRuchu && 'phase-oczekiwanie',
-          )}>
-            <div className="flex items-center gap-3">
-              {metrics.fazaRuchu === 'OCZEKIWANIE' && <Clock className="w-6 h-6 text-gray-400" />}
-              {metrics.fazaRuchu === 'PRZYGOTOWANIE' && <Shield className="w-6 h-6 text-blue-400" />}
-              {metrics.fazaRuchu === 'KONTAKT' && <Zap className="w-6 h-6 text-green-400" />}
-              {metrics.fazaRuchu === 'FOLLOW_THROUGH' && <ArrowRight className="w-6 h-6 text-amber-400" />}
-              {!metrics.fazaRuchu && <Clock className="w-6 h-6 text-gray-400" />}
-              <div className="min-w-0">
-                <p className={clsx(
-                  'font-bold text-lg leading-tight',
-                  metrics.fazaRuchu === 'KONTAKT' && 'text-green-400',
-                  metrics.fazaRuchu === 'PRZYGOTOWANIE' && 'text-blue-400',
-                  metrics.fazaRuchu === 'FOLLOW_THROUGH' && 'text-amber-400',
-                  (!metrics.fazaRuchu || metrics.fazaRuchu === 'OCZEKIWANIE') && 'text-gray-200',
-                )}>
-                  {metrics.fazaRuchu === 'FOLLOW_THROUGH' ? 'Follow-Through' : (metrics.fazaRuchu || 'Oczekiwanie')}
-                </p>
-                {metrics.feedbackFazy && (
-                  <p className="text-sm text-on-surface-variant mt-0.5 truncate">{metrics.feedbackFazy}</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Alerty — odbicie / ostrzeżenie */}
-          {metrics.typOdbicia && (
-            <div className="glass-card p-4 rounded-2xl border border-green-500/30 bg-green-500/10 flex items-center gap-3 contact-flash">
-              <CheckCircle2 className="w-6 h-6 text-green-400 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-green-400 font-bold text-base">Odbicie {metrics.typOdbicia} ✓</p>
-                {metrics.komunikatFuzji && (
-                  <p className="text-green-300/70 text-sm mt-0.5 truncate">{metrics.komunikatFuzji}</p>
-                )}
+          {/* Gotowość do odbicia — 4 kwadraciki */}
+          {metrics.gotowoscPrzedOdbiciem && (
+            <div className="glass-card p-4 rounded-2xl border border-white/10">
+              <p className="text-xs text-on-surface-variant font-medium mb-3">Pozycja przed odbiciem</p>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { key: 'stopa_ok', label: 'Stopy', ok: metrics.gotowoscPrzedOdbiciem.stopa_ok },
+                  { key: 'kolana_ok', label: 'Kolana', ok: metrics.gotowoscPrzedOdbiciem.kolana_ok },
+                  { key: 'platforma_ok', label: 'Ręce', ok: metrics.gotowoscPrzedOdbiciem.platforma_ok },
+                  { key: 'ruch_ok', label: 'Nogi', ok: metrics.gotowoscPrzedOdbiciem.ruch_ok },
+                ].map((item) => (
+                  <div key={item.key} className={clsx(
+                    'flex flex-col items-center gap-1 p-2 rounded-lg transition-all',
+                    item.ok ? 'bg-green-500/10' : 'bg-red-500/5',
+                  )}>
+                    <span className={clsx('text-base font-bold', item.ok ? 'text-green-400' : 'text-red-400/60')}>
+                      {item.ok ? '✓' : '✗'}
+                    </span>
+                    <span className={clsx('text-xs', item.ok ? 'text-green-400/80' : 'text-red-400/40')}>
+                      {item.label}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {metrics.brakPracyNog && (
-            <div className="glass-card p-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 flex items-center gap-3">
-              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
-              <p className="text-amber-400 font-bold text-sm">Zaangażuj nogi i biodra</p>
-            </div>
-          )}
-
-          {/* Podpowiedź postawy */}
-          <div className="glass-card p-4 rounded-2xl border border-white/10">
-            <div className="flex items-center gap-3">
-              {metrics.postureWarnings ? (
-                <AlertTriangle className="w-5 h-5 text-error shrink-0" />
-              ) : (
-                <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
-              )}
-              <p className={clsx('font-bold text-sm', metrics.postureWarnings ? 'text-error' : 'text-green-400')}>
-                {mainFeedback}
+          {/* Wynik odbicia — prosty blok po kontakcie */}
+          {isFollowThrough && metrics.feedbackFazy && (
+            <div className={clsx(
+              'glass-card p-4 rounded-2xl border contact-flash',
+              metrics.feedbackFazy.includes('✓')
+                ? 'border-green-500/30 bg-green-500/10'
+                : 'border-red-500/20 bg-red-500/5',
+            )}>
+              <p className={clsx(
+                'font-bold text-sm',
+                metrics.feedbackFazy.includes('✓') ? 'text-green-400' : 'text-red-400',
+              )}>
+                {metrics.feedbackFazy}
               </p>
             </div>
-          </div>
+          )}
 
           {/* Siatka 2-kolumnowa: Ocena + Kolana */}
           <div className="grid grid-cols-2 gap-3">
@@ -611,89 +590,6 @@ export default function LiveAnalysis() {
               </div>
             </div>
           )}
-
-          {/* Gotowość — checklist horyzontalny */}
-          {metrics.gotowoscPrzedOdbiciem && (
-            <div className="glass-card p-4 rounded-2xl border border-white/10">
-              <p className="text-xs text-on-surface-variant font-medium mb-3">Gotowość do odbicia</p>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { key: 'stopa_ok', label: 'Stopy', ok: metrics.gotowoscPrzedOdbiciem.stopa_ok },
-                  { key: 'kolana_ok', label: 'Kolana', ok: metrics.gotowoscPrzedOdbiciem.kolana_ok },
-                  { key: 'platforma_ok', label: 'Ręce', ok: metrics.gotowoscPrzedOdbiciem.platforma_ok },
-                  { key: 'ruch_ok', label: 'Nogi', ok: metrics.gotowoscPrzedOdbiciem.ruch_ok },
-                ].map((item) => (
-                  <div key={item.key} className={clsx(
-                    'flex flex-col items-center gap-1 p-2 rounded-lg transition-all',
-                    item.ok ? 'bg-green-500/10' : 'bg-red-500/5',
-                  )}>
-                    <span className={clsx('text-base font-bold', item.ok ? 'text-green-400' : 'text-red-400/60')}>
-                      {item.ok ? '✓' : '✗'}
-                    </span>
-                    <span className={clsx('text-xs', item.ok ? 'text-green-400/80' : 'text-red-400/40')}>
-                      {item.label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Stopy + Analiza boczna */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* Stopy */}
-            {metrics.rozstawienieStop !== undefined && metrics.rozstawienieStop !== null ? (
-              <div className="glass-card p-4 rounded-2xl border border-white/10">
-                <div className="flex items-center gap-2 mb-3">
-                  <Footprints className="w-4 h-4 text-on-surface-variant" />
-                  <span className="text-xs text-on-surface-variant font-medium">Pozycja stóp</span>
-                </div>
-                <div className="foot-spread-bar mb-2">
-                  <div
-                    className="foot-spread-optimal"
-                    style={{ left: `${(0.6 / 2.0) * 100}%`, width: `${((1.6 - 0.6) / 2.0) * 100}%` }}
-                  />
-                  <div
-                    className="foot-spread-marker"
-                    style={{
-                      left: `${Math.min(100, Math.max(0, (metrics.rozstawienieStop / 2.0) * 100))}%`,
-                      backgroundColor: (metrics.rozstawienieStop >= 0.6 && metrics.rozstawienieStop <= 1.6)
-                        ? '#4ade80' : '#f87171',
-                    }}
-                  />
-                </div>
-                {metrics.balansStop && metrics.balansStop !== 'OK' && (
-                  <p className="text-xs text-amber-400 mt-1">
-                    {metrics.balansStop === 'ZA_LEWO' ? '⬅ W lewo' : '➡ W prawo'}
-                  </p>
-                )}
-              </div>
-            ) : <div />}
-
-            {/* Analiza boczna */}
-            {(metrics.katBiodra !== undefined || metrics.zamachWykryty !== undefined) ? (
-              <div className="glass-card p-4 rounded-2xl border border-white/10">
-                <div className="flex items-center gap-2 mb-3">
-                  <Activity className="w-4 h-4 text-on-surface-variant" />
-                  <span className="text-xs text-on-surface-variant font-medium">Analiza boczna</span>
-                </div>
-                {metrics.katBiodra !== undefined && metrics.katBiodra !== null && (
-                  <div className="mb-2">
-                    <p className="text-xs text-on-surface-variant">Kąt bioder</p>
-                    <p className="text-xl font-bold text-white">{metrics.katBiodra}°</p>
-                  </div>
-                )}
-                {metrics.zamachWykryty !== undefined && (
-                  <div className="flex items-center gap-2">
-                    <div className={clsx('w-2.5 h-2.5 rounded-full', metrics.zamachWykryty ? 'bg-green-400' : 'bg-gray-500')} />
-                    <span className={clsx('text-xs font-medium', metrics.zamachWykryty ? 'text-green-400' : 'text-on-surface-variant')}>
-                      {metrics.zamachWykryty ? 'Zamach ✓' : 'Brak zamachu'}
-                    </span>
-                  </div>
-                )}
-              </div>
-            ) : <div />}
-          </div>
         </div>
       </div>
     </div>

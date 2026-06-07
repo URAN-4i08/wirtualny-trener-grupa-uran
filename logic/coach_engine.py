@@ -24,8 +24,8 @@ class VolleyballPostureEvaluator:
     def __init__(
         self,
         ema_alpha: float = 0.35,
-        knee_straight_on: float = 180.0,   # Praktycznie nigdy nie ostrzega
-        knee_straight_off: float = 178.0,  # Bardzo wybaczające
+        knee_straight_on: float = 174.0,   # Aktywuje ostrzeżenie przy prawie prostych kolanach
+        knee_straight_off: float = 170.0,  # Wyłącza po ugięciu (histereza)
         knee_low_on: float = 35.0,         # Dopiero przy bardzo głębokim kucaniu
         knee_low_off: float = 45.0,        # Bardzo wybaczające
         elbow_warn_on: float = 140.0,      # Poluzowano wymóg wyprostowanych rąk
