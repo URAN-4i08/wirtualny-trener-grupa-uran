@@ -1,165 +1,211 @@
-# Cyber Trener - szkolenie uruchomienia i testowania
+# Cyber Trener — uruchomienie i szkolenie
 
-Ten dokument prowadzi od zera do lokalnego testu aplikacji: backend analizuje obraz, frontend pokazuje stream, podpowiedzi postawy i ocenę odbicia.
+Przewodnik od instalacji do testu w sali: backend analizuje obraz, frontend pokazuje stream, kafelki gotowości, fazy ruchu i podsumowanie po odbiciu.
 
-## 1. Co jest potrzebne
+Ustalenia merytoryczne (konsultacja trenera): **[KONSULTACJA_TRENERA.md](./KONSULTACJA_TRENERA.md)**.
 
-Na komputerze powinny być:
+---
 
-- Node.js 24+ z npm.
-- Python 3.11 64-bit.
-- Kamera internetowa albo plik wideo z ćwiczeniem.
-- Dostęp do internetu przy pierwszej instalacji paczek i pobraniu modelu YOLO.
+## 1. Wymagania
 
-W tym środowisku zostało już przygotowane:
+| Składnik | Wersja / uwagi |
+|----------|----------------|
+| Python | 3.11 (64-bit) |
+| Node.js | 20+ z npm |
+| System | Windows (skrypty `.ps1`) lub ręcznie na macOS/Linux |
+| Kamera | Wbudowana w laptop lub telefon podłączony kablem USB |
+| Internet | Tylko przy pierwszej instalacji (paczki, model YOLO, opcjonalnie Vosk PL) |
+| Konto Supabase | Do logowania i zapisu historii treningów |
 
-- Python 3.11.9 dla użytkownika.
-- Lokalne środowisko `.venv`.
-- Paczki backendu z `requirements.txt`.
-- Paczki frontendu przez `npm ci`.
-- Model YOLO `yolov8s.pt` pobrany do katalogu projektu.
+Projekt jest zaprojektowany do **pracy offline w sali** po wstępnej konfiguracji. Prezentacja odbywa się lokalnie na laptopie (opcjonalnie z rzutorem).
 
-## 2. Najważniejsze foldery
+---
 
-- `frontend` - strona React/Vite.
-- `server.py` - backend FastAPI łączący kamerę/wideo, MediaPipe, YOLO i logikę trenera.
-- `logic/coach_engine.py` - reguły oceny pozycji: kolana, dłonie, łokcie.
-- `vision/analysis_video.py` - starszy skrypt demonstracyjny OpenCV.
-- `audio/voice_control.py` - miejsce na przyszłe sterowanie/komunikaty głosowe.
+## 2. Konfiguracja środowiska
 
-## 3. Uruchamianie lokalne
+### 2.1 Plik `.env`
 
-Otwórz dwa okna terminala w katalogu projektu:
+Utwórz plik `.env` w **katalogu głównym** projektu:
+
+```env
+VITE_SUPABASE_URL=https://twoj-projekt.supabase.co
+VITE_SUPABASE_ANON_KEY=twoj-klucz-anon-publiczny
+```
+
+Skopiuj te same zmienne do `frontend/.env` (Vite czyta je przy starcie frontendu). Backend (`server.py`) również używa `VITE_SUPABASE_*` do zapisu sesji z tokenem użytkownika.
+
+Opcjonalnie — gdy API nie jest na localhost:
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_WS_BASE_URL=ws://127.0.0.1:8000
+```
+
+### 2.2 Backend — pierwsze uruchomienie
 
 ```powershell
 cd D:\STUDIA\wirtualny-trener-grupa-uran
-```
-
-W pierwszym oknie uruchom backend:
-
-```powershell
 .\start-backend.ps1
 ```
 
-Backend powinien działać pod:
+Skrypt:
+- tworzy `.venv`, jeśli go nie ma,
+- instaluje `requirements.txt`,
+- uruchamia Uvicorn na porcie **8000**.
 
-```text
-http://localhost:8000
-```
+Przy pierwszym uruchomieniu Ultralytics może pobrać model YOLO (domyślnie `yolov8n.pt`).
 
-W drugim oknie uruchom frontend:
+### 2.3 Frontend
 
 ```powershell
 .\start-frontend.ps1
 ```
 
-Frontend powinien działać pod:
+Aplikacja: **http://localhost:5173**
 
-```text
-http://localhost:5173
-```
+---
 
-## 4. Test live view
+## 3. Struktura projektu (dla developera)
 
-1. Wejdź na `http://localhost:5173`.
-2. Przejdź do `Live Analysis`.
-3. Wybierz `Kamera` albo `Wideo z komputera`.
-4. Przy pliku wideo poczekaj, aż pasek przygotowania dojdzie do 100%.
-5. Kliknij `Rozpocznij`.
-6. Obserwuj:
-   - status analizy,
-   - podpowiedź postawy,
-   - ocenę odbicia,
-   - kąt ugięcia kolan,
-   - skuteczność pozycji.
+| Ścieżka | Rola |
+|---------|------|
+| `server.py` | FastAPI: kamera, wideo, WebSocket, MJPEG, zapis Supabase |
+| `logic/coach_engine.py` | `VolleyballPostureEvaluator` — kolana, łokcie, dłonie (EMA + histereza) |
+| `logic/biomechanics.py` | Fazy ruchu, stopy, analiza front/bok, fuzja Dual-Cam |
+| `audio/voice_control.py` | TTS — odczyt podpowiedzi na głos |
+| `audio/speech_recognition.py` | Vosk — rozpoznawanie komend |
+| `frontend/src/pages/LiveAnalysis.tsx` | Główny ekran analizy |
+| `frontend/src/voice/commandParser.ts` | Mapowanie fraz na akcje |
+
+---
+
+## 4. Pierwsze logowanie i test
+
+1. Otwórz **http://localhost:5173**.
+2. Zarejestruj konto lub zaloguj się (Supabase Auth).
+3. Przejdź do **Live Analysis**.
+4. Wybierz źródło:
+   - **Kamera 1 / 2** — pojedyncza kamera,
+   - **Dual-Cam** — laptop + telefon (indeksy domyślnie: A=1, B=0 — sprawdź na swoim Macu),
+   - **Wideo z komputera** — upload pliku MP4/MOV.
+5. Kliknij **Rozpocznij** (lub powiedz „rozpocznij analizę” z włączonym głosem w sidebarze).
+6. Obserwuj panel po prawej:
+   - kafelki **Stopy / Kolana / Ręce / Nogi**,
+   - kąt kolan i licznik odbić,
+   - po odbiciu — blok podsumowania (faza `FOLLOW_THROUGH`, ~3 s).
+
+---
 
 ## 5. Jak działa feedback
 
-Aplikacja pokazuje dwa typy informacji:
+### Dwa poziomy informacji
 
-- Podpowiedź postawy działa stale, gdy wykryto sylwetkę. Przykłady: `Ugnij kolana!`, `Zlacz dlonie!`, `Wyprostuj lokcie!`.
-- Ocena odbicia pojawia się tylko wtedy, gdy YOLO wykryje piłkę blisko nadgarstków.
+| Typ | Kiedy | Przykłady |
+|-----|-------|-----------|
+| **Postawa (ciągła)** | Sylwetka w kadrze | „Ugnij kolana”, „Wyprostuj łokcie”, „Złącz dłonie” |
+| **Odbicie (moment kontaktu)** | Piłka blisko przedramion | Ocena techniki, aktualizacja licznika, snapshot do fazy FOLLOW_THROUGH |
 
-To odpowiada ustaleniu: stale pomagamy poprawiać postawę, ale samo odbicie oceniamy tylko w momencie kontaktu z piłką.
+### Fazy ruchu (`biomechanics.analizuj_faze`)
 
-### Komunikaty głosowe (TTS)
-
-Backend może czytać podpowiedzi na głos przez głośniki laptopa (np. gdy kamera stoi dalej od zawodnika).
-
-Domyślnie działa polski głos neuralny (Edge TTS). Aby użyć głosów Ivona (Ewa, Maja, Jacek) przez Amazon Polly:
-
-```bash
-export VOICE_ENABLED=1
-export TTS_ENGINE=polly
-export TTS_VOICE=Ewa
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export AWS_DEFAULT_REGION=eu-central-1
+```
+OCZEKIWANIE → PRZYGOTOWANIE → KONTAKT → FOLLOW_THROUGH (3 s)
 ```
 
-Opcjonalne zmienne:
+- **OCZEKIWANIE** — ćwiczący w pozycji, piłka poza strefą kontaktu.
+- **PRZYGOTOWANIE** — piłka w locie, kafelki pokazują gotowość.
+- **KONTAKT** — wykryto odbicie.
+- **FOLLOW_THROUGH** — przez 3 s wyświetlane podsumowanie; ćwiczący może podejść do ekranu po powtórzeniu.
 
-```bash
-export VOICE_COOLDOWN_SEC=5   # nie powtarzaj tej samej podpowiedzi częściej niż co 5 s
-export TTS_ENGINE=edge        # domyślnie, bez kluczy AWS
-export TTS_VOICE=pl-PL-ZofiaNeural
-export VOICE_ENABLED=0        # wyłączenie mowy
+### Kafelki gotowości
+
+| Kafelek | Kryterium (skrót) |
+|---------|-------------------|
+| Stopy | Rozstawienie względem szerokości barków |
+| Kolana | Kąt biodro–kolano–kostka (priorytet z konsultacji) |
+| Ręce | Złączone nadgarstki / platforma |
+| Nogi | Praca nóg / zamach (pełniej przy Dual-Cam) |
+
+Szczegóły progów: [KONSULTACJA_TRENERA.md](./KONSULTACJA_TRENERA.md).
+
+---
+
+## 6. Komunikaty głosowe (TTS)
+
+Backend może czytać podpowiedzi przez głośniki laptopa — ważne na prezentacji w sali, gdy ćwiczący nie patrzy na ekran.
+
+### Włączenie (zalecane na demo)
+
+Przed startem backendu (PowerShell):
+
+```powershell
+$env:VOICE_ENABLED="1"
+$env:TTS_ENGINE="edge"
+$env:TTS_VOICE="pl-PL-ZofiaNeural"
+.\start-backend.ps1
 ```
 
-Komunikaty są czytane przy zmianie podpowiedzi, np. `Ugnij kolana!`, `Złącz dłonie!`, `Wyprostuj łokcie!`.
+Lub dodaj `VOICE_ENABLED=1` do pliku `.env`.
 
-### Sterowanie głosowe UI
+### Opcjonalnie — Amazon Polly (głosy Ivona)
 
-**Brave:** wbudowane rozpoznawanie mowy przeglądarki nie działa (blokuje Google). Aplikacja używa lokalnego **Vosk** na backendzie — w sidebarze widać „Nasłuch (Vosk lokalny)”.
+```powershell
+$env:VOICE_ENABLED="1"
+$env:TTS_ENGINE="polly"
+$env:TTS_VOICE="Ewa"
+$env:AWS_ACCESS_KEY_ID="..."
+$env:AWS_SECRET_ACCESS_KEY="..."
+$env:AWS_DEFAULT_REGION="eu-central-1"
+```
 
-Przy pierwszym uruchomieniu backend pobierze model PL (~50 MB) do `data/models/`. Wymagany działający backend na porcie 8000.
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `VOICE_ENABLED` | `0` | `1` = włącz TTS |
+| `TTS_ENGINE` | `edge` | `edge`, `polly`, `pyttsx3` |
+| `VOICE_COOLDOWN_SEC` | `5` | Min. odstęp między tym samym komunikatem |
+
+---
+
+## 7. Sterowanie głosowe (Vosk)
+
+W sidebarze: **Włącz nasłuch**. Przy pierwszym użyciu backend pobierze model polski Vosk (~50 MB) do `data/models/`.
+
+**Brave:** wbudowane Web Speech API nie działa — aplikacja używa Vosk z backendu. Zezwól na mikrofon w ustawieniach strony.
 
 | Komenda | Akcja |
 |---------|--------|
-| `rozpocznij` | Start analizy (na stronie Live Analysis) |
-| `zatrzymaj` | Stop analizy |
-| `panel` | Przejście do Dashboard (panel główny) |
-| `analiza` | Przejście do Live Analysis |
+| „rozpocznij analizę” / „zacznij trening” | Start analizy (Live Analysis) |
+| „zatrzymaj analizę” / „koniec analizy” | Stop analizy |
+| „panel” / „strona główna” | Dashboard |
+| „analiza” | Live Analysis |
+| „historia” | Historia treningów |
+| „rozgrzewka” | Rozgrzewka |
 
-W Brave: ikona lwa → ustawienia strony → **Mikrofon: Zezwól**. W panelu bocznym pojawi się „Słyszę: …” gdy fraza została rozpoznana.
+---
 
-## 5a. Dlaczego upload wideo startuje z opóźnieniem
+## 8. Tryb Dual-Cam (laptop + telefon)
 
-Plik wideo jest najpierw analizowany w tle. Backend zapisuje gotowe klatki z narysowanym szkieletem, piłką i metrykami, a dopiero po zakończeniu przygotowania frontend pozwala kliknąć `Rozpocznij`.
+1. Podłącz telefon kablem USB (macOS: Continuity Camera / aplikacja typu Camo / DroidCam — zależnie od setupu).
+2. W Live Analysis kliknij **Dual-Cam**.
+3. Backend uruchamia dwa strumienie i **fuzję** wyników (`fuzja_sensorow`).
+4. Pasek „Fuzja obu kamer” pojawia się w panelu bocznym.
 
-Dzięki temu odtwarzanie gotowego pliku jest dużo płynniejsze, bo podczas oglądania backend nie musi już liczyć MediaPipe i YOLO dla każdej klatki na żywo.
+Jeśli indeksy kamer są zamienione, edytuj parametry w `LiveAnalysis.tsx` lub endpoint `/api/source/camera-dual` w `server.py`.
 
-## 6. Konfiguracja pod hosting
+Druga kamera jest **opcjonalna** — bez niej system ocenia kolana z widoku frontowego (mniej precyzyjnie).
 
-Frontend nie ma już wpisanego na stałe `localhost`. Do hostingu ustaw:
+---
 
-```env
-VITE_API_BASE_URL=https://adres-twojego-backendu
-VITE_WS_BASE_URL=wss://adres-twojego-backendu
-```
+## 9. Upload wideo — dlaczego jest opóźnienie
 
-Lokalny przykład jest w:
+Plik wideo jest **najpierw analizowany w tle**. Backend zapisuje klatki z nałożonym szkieletem i metrykami do `data/uploads/processed/`. Dopiero po 100% postępu można kliknąć **Rozpocznij** — odtwarzanie jest wtedy płynne, bez obciążania CPU MediaPipe/YOLO w czasie rzeczywistym.
 
-```text
-frontend/.env.example
-```
+---
 
-Backend ma dodatkowe zmienne:
+## 10. Wydajność kamery live
 
-```env
-ALLOWED_ORIGINS=https://adres-twojego-frontendu
-YOLO_MODEL_PATH=yolov8s.pt
-```
+Live działa w trybie oszczędnym: analiza co N klatek, obniżona rozdzielczość dla AI.
 
-Gdy będzie własny model, ustaw `YOLO_MODEL_PATH` na ścieżkę do pliku `.pt`.
-
-## 7. Typowe problemy
-
-### Kamera live laguje albo zatrzymuje obraz
-
-Live camera działa w trybie wydajnościowym: obraz jest wysyłany płynniej, a ciężka analiza AI jest robiona co kilka klatek na zmniejszonej rozdzielczości.
-
-Możesz dodatkowo obniżyć obciążenie przez zmienne środowiskowe przed startem backendu:
+Jeśli obraz laguje, przed startem backendu:
 
 ```powershell
 $env:LIVE_STREAM_FPS="15"
@@ -170,67 +216,118 @@ $env:LIVE_BALL_EVERY_N_FRAMES="8"
 .\start-backend.ps1
 ```
 
-Znaczenie:
+| Zmienna | Znaczenie |
+|---------|-----------|
+| `LIVE_STREAM_FPS` | Klatki wysyłane do przeglądarki |
+| `LIVE_STREAM_WIDTH` | Szerokość obrazu w UI |
+| `LIVE_ANALYSIS_WIDTH` | Szerokość dla MediaPipe/YOLO |
+| `LIVE_POSE_EVERY_N_FRAMES` | Co którą klatkę liczyć pozę |
+| `LIVE_BALL_EVERY_N_FRAMES` | Co którą klatkę szukać piłki |
 
-- `LIVE_STREAM_FPS` - ile klatek na sekundę wysyła backend do strony.
-- `LIVE_STREAM_WIDTH` - szerokość obrazu wysyłanego do UI.
-- `LIVE_ANALYSIS_WIDTH` - szerokość obrazu używanego do MediaPipe/YOLO.
-- `LIVE_POSE_EVERY_N_FRAMES` - co którą klatkę liczyć pozycję.
-- `LIVE_BALL_EVERY_N_FRAMES` - co którą klatkę szukać piłki przez YOLO.
+---
 
-Niższe wartości rozdzielczości i rzadsza analiza dają płynniejszy obraz, ale feedback może być mniej częsty.
+## 11. Typowe problemy
 
-### Frontend się nie uruchamia
+### Backend nie startuje
 
-Wejdź do `frontend` i odtwórz paczki:
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Frontend — błąd paczek
 
 ```powershell
 cd frontend
-npm ci
+npm install
 npm run dev
 ```
 
-### Backend mówi, że nie widzi kamery
+### Brak zapisu treningu
 
-Sprawdź, czy kamera nie jest używana przez Teams/Zoom/Discord. Potem uruchom backend ponownie.
+- Sprawdź `.env` — `VITE_SUPABASE_URL` i `VITE_SUPABASE_ANON_KEY`.
+- Musisz być **zalogowany** — backend potrzebuje tokenu sesji użytkownika.
+
+### Kamera zajęta
+
+Zamknij Teams, Zoom, Discord. Uruchom backend ponownie.
+
+### „Nie wykryto sylwetki”
+
+- Osoba poza kadrem, zbyt słabe światło lub zasłonięte kolana / ręce.
+- Stały kadr — unikaj nagłań z szybko zmieniającym się kątem kamery.
 
 ### Brak detekcji piłki
 
-Model `yolov8s.pt` jest ogólny. Działa na klasie `sports ball`, ale dla siatkówki może wymagać dobrego światła i widocznej piłki. Docelowo warto dodać własny model YOLO i ustawić `YOLO_MODEL_PATH`.
+Model YOLO (`sports ball`) wymaga widocznej piłki i dobrego oświetlenia. Ustaw `YOLO_MODEL_PATH` na lokalny plik `.pt`, jeśli używasz innej wersji modelu.
 
-### Komunikaty są zbyt czułe albo za rzadkie
+### Komunikaty zbyt czułe / za rzadkie
 
-Progi są w:
+Progi live (wygładzone): `logic/coach_engine.py` — klasa `VolleyballPostureEvaluator`.
 
-```text
-logic/coach_engine.py
+Progi faz i stóp: `logic/biomechanics.py` — sekcja konfiguracji na górze pliku.
+
+Moment odbicia: `server.py` — klasa `BallContactTracker`.
+
+### macOS — indeksy kamer
+
+Sprawdź, który indeks to telefon, który laptop:
+
+```python
+import cv2
+for i in range(4):
+    cap = cv2.VideoCapture(i)
+    print(i, cap.isOpened())
+    cap.release()
 ```
 
-Moment odbicia jest w:
+---
 
-```text
-server.py
+## 12. Scenariusz prezentacji w sali (~2 min)
+
+1. Laptop podłączony do rzutnika (opcjonalnie).
+2. Start backendu z `VOICE_ENABLED=1`.
+3. Start frontendu, logowanie.
+4. Live Analysis → Kamera lub Dual-Cam.
+5. Sidebar → włącz nasłuch głosowy.
+6. Ćwiczący mówi: **„Rozpocznij analizę”**.
+7. Podrzuca piłkę, odbija — **nie patrzy na ekran** podczas ruchu.
+8. Po odbiciu — 3 s podsumowania na ekranie / głos TTS.
+9. Ćwiczący podchodzi, sprawdza kafelki, wraca na kolejną próbę.
+10. **„Zatrzymaj analizę”** → Dashboard / Historia.
+
+---
+
+## 13. Dopracowanie logiki (bieżące prace zespołu)
+
+Zgodnie z [KONSULTACJA_TRENERA.md](./KONSULTACJA_TRENERA.md) — bez pochylenia tułowia na tym etapie:
+
+- [ ] Kalibracja progów kolan i łokci na nagraniach z sali
+- [ ] Osobne kafelki Łokcie / Ręce w UI
+- [ ] Lepsza ocena równoległości stóp
+- [ ] % poprawności per element w statystykach sesji
+- [ ] Wskaźnik fazy ruchu w interfejsie (style CSS już w `index.css`)
+- [ ] Baner zachęty do Dual-Cam przy jednej kamerze
+
+---
+
+## 14. macOS / Linux (bez skryptów .ps1)
+
+**Backend:**
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Obecnie piłka jest uznawana za blisko nadgarstków, gdy odległość jest mniejsza niż `100` pikseli.
+**Frontend:**
 
-## 8. Co testować na prezentacji
+```bash
+cd frontend && npm install && npm run dev
+```
 
-Minimalny scenariusz:
+---
 
-1. Start backendu.
-2. Start frontendu.
-3. Wejście w `Live Analysis`.
-4. Uruchomienie kamery albo wrzucenie pliku.
-5. Pokazanie komunikatu `Nie wykryto sylwetki`, gdy nie ma osoby.
-6. Pokazanie podpowiedzi postawy przy widocznej osobie.
-7. Pokazanie oceny odbicia przy piłce blisko rąk.
-
-## 9. Następne etapy projektu
-
-- Sterowanie głosowe UI: komendy w przeglądarce (Chrome/Edge, `VoiceCommandProvider` w frontendzie).
-- TTS podpowiedzi trenera: `audio/voice_control.py`.
-- Dodać własny model YOLO dla piłki siatkowej.
-- Dodać historię analiz i bazę SQLite.
-- Dodać tryb dwóch kamer.
-- Dopasować progi do realnych nagrań zespołu.
+*Ostatnia aktualizacja: czerwiec 2026 — Grupa Uran*

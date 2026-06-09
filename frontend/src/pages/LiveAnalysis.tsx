@@ -1,26 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useVoiceCommands } from '../context/VoiceCommandContext';
 import { useAuth } from '../context/AuthContext';
 import {
   AlertTriangle,
-  Camera,
   CheckCircle2,
+  LayoutDashboard,
   MonitorPlay,
-  PlayCircle,
-  StopCircle,
   UploadCloud,
   WifiOff,
   Clock,
-  Shield,
-  Zap,
-  ArrowRight,
-  Footprints,
-  Activity,
+  Info,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { apiUrl, wsUrl } from '../config/api';
 import { supabase } from '../config/supabase';
+import PhaseStepper from '../components/live/PhaseStepper';
+import ReadinessTiles from '../components/live/ReadinessTiles';
+import FollowThroughOverlay from '../components/live/FollowThroughOverlay';
 
 type Metrics = {
   score: number;
@@ -38,7 +36,6 @@ type Metrics = {
   isAnalyzing: boolean;
   videoProcessingStatus: 'idle' | 'processing' | 'ready' | 'error';
   videoProcessingProgress: number;
-  // Pola biomechaniczne
   cameraMode?: 'front' | 'side' | 'dual';
   fuzjaOcena?: number;
   komunikatFuzji?: string | null;
@@ -61,35 +58,6 @@ type Metrics = {
   katBiodra?: number | null;
 };
 
-function resolveAnalysisLabels(
-  metrics: Metrics,
-  isAnalyzing: boolean,
-  cameraIndex: number,
-  videoName: string | null,
-) {
-  const sourceLabel =
-    metrics.source === 'camera' ? `Kamera ${cameraIndex + 1}` : videoName || 'Plik wideo';
-
-  if (!isAnalyzing) {
-    return { statusLabel: metrics.status, sourceLabel };
-  }
-
-  if (metrics.isContact) {
-    return { statusLabel: 'Wykryto odbicie piłki', sourceLabel };
-  }
-
-  if (metrics.hasPose) {
-    return {
-      statusLabel: metrics.postureWarnings
-        ? 'Popraw postawę — szczegóły w sekcji obok'
-        : 'Analiza postawy — pozycja wygląda dobrze',
-      sourceLabel,
-    };
-  }
-
-  return { statusLabel: 'Czekam na sylwetkę w kadrze…', sourceLabel };
-}
-
 const initialMetrics: Metrics = {
   score: 0,
   kneeAngle: 120,
@@ -108,6 +76,19 @@ const initialMetrics: Metrics = {
   videoProcessingProgress: 0,
 };
 
+function formatSessionTime(totalSeconds: number) {
+  const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
+  const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
+  const s = (totalSeconds % 60).toString().padStart(2, '0');
+  return `${h}:${m}:${s}`;
+}
+
+function footSpreadPercent(value: number | null | undefined) {
+  if (value == null) return 50;
+  const clamped = Math.max(0.6, Math.min(1.6, value));
+  return Math.round(((clamped - 0.6) / 1.0) * 100);
+}
+
 export default function LiveAnalysis() {
   const { user } = useAuth();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -118,6 +99,7 @@ export default function LiveAnalysis() {
   const [feedKey, setFeedKey] = useState(0);
   const [selectedCameraIndex, setSelectedCameraIndex] = useState(0);
   const [cameraMode, setCameraMode] = useState<'front' | 'side' | 'dual'>('front');
+  const [sessionSeconds, setSessionSeconds] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -127,11 +109,7 @@ export default function LiveAnalysis() {
 
     function connect() {
       ws = new WebSocket(wsUrl('/ws/metrics'));
-
-      ws.onopen = () => {
-        setConnectionError(null);
-      };
-
+      ws.onopen = () => setConnectionError(null);
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -141,21 +119,16 @@ export default function LiveAnalysis() {
           setConnectionError('Nie udało się odczytać danych z analizy.');
         }
       };
-
       ws.onerror = () => {
         setConnectionError('Brak połączenia z serwerem analizy. Sprawdź, czy backend działa na porcie 8000.');
       };
-
       ws.onclose = () => {
         setMetrics((current) => ({ ...current, isAnalyzing: false }));
-        if (shouldReconnect) {
-          reconnectTimer = window.setTimeout(connect, 2000);
-        }
+        if (shouldReconnect) reconnectTimer = window.setTimeout(connect, 2000);
       };
     }
 
     connect();
-
     return () => {
       shouldReconnect = false;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
@@ -163,25 +136,33 @@ export default function LiveAnalysis() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAnalyzing) {
+      setSessionSeconds(0);
+      return;
+    }
+    const id = window.setInterval(() => setSessionSeconds((v) => v + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [isAnalyzing]);
+
   const score = Math.max(0, Math.min(100, metrics.score));
   const contactScore = metrics.contactScore ?? score;
-  const { statusLabel, sourceLabel } = resolveAnalysisLabels(
-    metrics,
-    isAnalyzing,
-    selectedCameraIndex,
-    selectedVideoName,
-  );
   const isFollowThrough = metrics.fazaRuchu === 'FOLLOW_THROUGH';
-  const mainFeedback = (() => {
-    if (!isAnalyzing) return metrics.postureWarnings || '—';
-    if (!metrics.hasPose) return 'Stań w kadrze kamery, aby ocenić postawę';
-    return metrics.postureWarnings || 'Pozycja wygląda dobrze';
-  })();
-  const contactFeedback = metrics.contactWarning || 'Czekam na odbicie piłki';
   const isPreparingVideo = metrics.source === 'file' && metrics.videoProcessingStatus === 'processing';
   const isVideoReady = metrics.source !== 'file' || metrics.videoProcessingStatus === 'ready';
   const canStartAnalysis = !isPreparingVideo && isVideoReady;
   const canStopAnalysis = isAnalyzing || isPreparingVideo;
+  const showDualCamHint = !isAnalyzing && cameraMode !== 'dual';
+
+  const coachBanner = (() => {
+    if (isFollowThrough && metrics.feedbackFazy) return metrics.feedbackFazy;
+    if (!isAnalyzing) return null;
+    if (!metrics.hasPose) return 'Stań w kadrze kamery';
+    if (metrics.postureWarnings) return metrics.postureWarnings;
+    return 'Pozycja wygląda dobrze';
+  })();
+
+  const bannerPositive = coachBanner && !metrics.postureWarnings && metrics.hasPose;
 
   const isAnalyzingRef = useRef(isAnalyzing);
   const canStartAnalysisRef = useRef(canStartAnalysis);
@@ -212,7 +193,7 @@ export default function LiveAnalysis() {
         if (!response.ok) throw new Error();
         setFeedKey((current) => current + 1);
       } catch {
-        setConnectionError(`Nie udało się uruchomić kamery.`);
+        setConnectionError('Nie udało się uruchomić kamery.');
         return;
       }
     }
@@ -231,11 +212,6 @@ export default function LiveAnalysis() {
     return () => registerLiveHandlers(null);
   }, [registerLiveHandlers, startAnalysis, stopAnalysis]);
 
-  const pieData = [
-    { name: 'Punkty', value: score, color: '#4ade80' },
-    { name: 'Brakujące', value: 100 - score, color: '#32353c' },
-  ];
-
   async function getSessionHeaders() {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
@@ -253,9 +229,7 @@ export default function LiveAnalysis() {
     setMetrics((current) => ({
       ...current,
       source: 'camera',
-      status: mode === 'dual'
-        ? 'Dual-Cam: frontowa + boczna'
-        : `Kamera ${cameraIndex + 1} (${mode === 'side' ? 'boczna' : 'frontowa'})`,
+      status: `Kamera ${cameraIndex + 1}`,
       videoProcessingStatus: 'idle',
       videoProcessingProgress: 0,
     }));
@@ -266,19 +240,16 @@ export default function LiveAnalysis() {
   async function selectDualCamera() {
     setConnectionError(null);
     setSelectedVideoName(null);
-
-    // 1. Najpierw zabij stary strumień — usuwa <img> z DOM, zrywając HTTP
     setIsAnalyzing(false);
     setCameraMode('dual');
-
     if (isAnalyzingRef.current) {
-      try { await fetch(apiUrl('/api/analysis/stop'), { method: 'POST' }); } catch {}
+      try {
+        await fetch(apiUrl('/api/analysis/stop'), { method: 'POST' });
+      } catch {
+        /* ignore */
+      }
     }
-
-    // 2. Poczekaj aż stary generator na backendzie się zamknie i zwolni kamery
-    await new Promise(r => setTimeout(r, 1500));
-
-    // 3. Wyślij POST do backendu, żeby ustawić tryb camera_dual
+    await new Promise((r) => window.setTimeout(r, 1500));
     try {
       const url = `/api/source/camera-dual?camera_index_a=1&camera_index_b=0${user ? `&user_id=${user.id}` : ''}`;
       const response = await fetch(apiUrl(url), {
@@ -290,8 +261,6 @@ export default function LiveAnalysis() {
       setConnectionError('Nie udało się uruchomić Dual-Cam.');
       return;
     }
-
-    // 4. Ustaw metryki i uruchom nowy strumień
     setMetrics((current) => ({
       ...current,
       source: 'camera',
@@ -308,10 +277,8 @@ export default function LiveAnalysis() {
     setConnectionError(null);
     setIsUploading(true);
     setIsAnalyzing(false);
-
     const formData = new FormData();
     formData.append('file', file);
-
     try {
       const url = `/api/source/upload${user ? `?user_id=${user.id}` : ''}`;
       const response = await fetch(apiUrl(url), {
@@ -319,12 +286,8 @@ export default function LiveAnalysis() {
         headers: await getSessionHeaders(),
         body: formData,
       });
-
       const result = await response.json();
-      if (!response.ok || !result.ok) {
-        throw new Error(result.error || 'Nie udało się przesłać pliku.');
-      }
-
+      if (!response.ok || !result.ok) throw new Error(result.error || 'Upload failed');
       setSelectedVideoName(result.videoName || file.name);
       setMetrics((current) => ({
         ...current,
@@ -342,256 +305,256 @@ export default function LiveAnalysis() {
     }
   }
 
+  const pieData = [
+    { name: 'Punkty', value: score, color: '#f97316' },
+    { name: 'Brak', value: 100 - score, color: '#352720' },
+  ];
+
+  const sourceButtons = [
+    { id: 'front', label: 'Kamera front', action: () => void selectCamera(1, 'front'), active: metrics.source === 'camera' && cameraMode === 'front' },
+    { id: 'side', label: 'Kamera bok', action: () => void selectCamera(0, 'side'), active: metrics.source === 'camera' && cameraMode === 'side' },
+    { id: 'dual', label: 'Dual-Cam', action: () => void selectDualCamera(), active: metrics.source === 'camera' && cameraMode === 'dual' },
+    { id: 'file', label: 'Plik', action: () => fileInputRef.current?.click(), active: metrics.source === 'file' },
+  ] as const;
+
   return (
-    <div className="max-w-6xl mx-auto flex flex-col h-[calc(100vh-3rem)]">
-      <header className="flex flex-col gap-4 mb-6 shrink-0 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Analiza Live</h2>
-          <p className="text-on-surface-variant">Jedna kamera lub plik wideo z komputera, z podpowiedziami w czasie rzeczywistym.</p>
+    <div className="flex min-h-screen flex-col bg-navy">
+      <header className="glass-panel sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-4 border-b border-white/10 px-4 md:px-6">
+        <div className="flex items-center gap-4">
+          <Link to="/dashboard" className="rounded-lg p-2 text-on-surface-variant hover:bg-white/5 hover:text-on-surface" title="Panel główny">
+            <LayoutDashboard className="h-5 w-5" />
+          </Link>
+          <div>
+            <h1 className="font-display text-lg font-semibold text-on-surface">Analiza na żywo</h1>
+            <p className="hidden text-xs text-on-surface-variant sm:block">Odbicie dolne — feedback w czasie rzeczywistym</p>
+          </div>
+          <div className="hidden items-center gap-2 sm:flex">
+            <span className={clsx('flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold', isAnalyzing ? 'border-success/30 bg-success/10 text-success' : 'border-white/10 bg-white/5 text-on-surface-variant')}>
+              <span className={clsx('h-2 w-2 rounded-full', isAnalyzing ? 'bg-success pulse-live' : 'bg-outline')} />
+              {isAnalyzing ? 'Połączono' : 'Standby'}
+            </span>
+            {isAnalyzing && (
+              <span className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 font-mono text-xs text-on-surface-variant">
+                <Clock className="h-3.5 w-3.5" />
+                {formatSessionTime(sessionSeconds)}
+              </span>
+            )}
+          </div>
         </div>
 
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <div className="hidden rounded-lg bg-surface-container p-1 md:flex">
+            {sourceButtons.map((btn) => (
+              <button
+                key={btn.id}
+                type="button"
+                onClick={btn.action}
+                disabled={btn.id === 'file' && isUploading}
+                className={clsx(
+                  'rounded-md px-3 py-1.5 text-xs font-semibold transition-all',
+                  btn.active ? 'bg-white/10 text-on-surface' : 'text-on-surface-variant hover:bg-white/5',
+                )}
+              >
+                {btn.id === 'file' && isUploading ? 'Wgrywanie...' : btn.label}
+              </button>
+            ))}
+          </div>
           <button
-            onClick={() => selectCamera(1, 'front')}
-            className={clsx(
-              'flex items-center gap-2 px-4 py-2 rounded-lg border transition',
-              metrics.source === 'camera' && cameraMode === 'front'
-                ? 'bg-primary/15 text-primary border-primary/30'
-                : 'bg-surface-variant/50 text-white border-white/10 hover:bg-surface-variant',
-            )}
-          >
-            <Camera className="w-4 h-4" />
-            Kamera (Front — telefon)
-          </button>
-
-          <button
-            onClick={() => selectCamera(0, 'side')}
-            className={clsx(
-              'flex items-center gap-2 px-4 py-2 rounded-lg border transition',
-              metrics.source === 'camera' && cameraMode === 'side'
-                ? 'bg-primary/15 text-primary border-primary/30'
-                : 'bg-surface-variant/50 text-white border-white/10 hover:bg-surface-variant',
-            )}
-          >
-            <Camera className="w-4 h-4" />
-            Kamera (Bok — laptop)
-          </button>
-
-          <button
-            onClick={selectDualCamera}
-            className={clsx(
-              'flex items-center gap-2 px-4 py-2 rounded-lg border transition',
-              metrics.source === 'camera' && cameraMode === 'dual'
-                ? 'bg-secondary/15 text-secondary border-secondary/30'
-                : 'bg-surface-variant/50 text-white border-white/10 hover:bg-surface-variant',
-            )}
-          >
-            <MonitorPlay className="w-4 h-4" />
-            Dual-Cam
-          </button>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) uploadVideo(file);
-            }}
-          />
-
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className={clsx(
-              'flex items-center gap-2 px-4 py-2 rounded-lg border transition',
-              metrics.source === 'file'
-                ? 'bg-secondary/15 text-secondary border-secondary/30'
-                : 'bg-surface-variant/50 text-white border-white/10 hover:bg-surface-variant',
-              isUploading && 'opacity-60 cursor-wait',
-            )}
-          >
-            <UploadCloud className="w-4 h-4" />
-            {isUploading ? 'Wgrywanie...' : 'Wideo z komputera'}
-          </button>
-
-          <button
-            onClick={() => {
-              if (canStopAnalysis) stopAnalysis();
-              else startAnalysis();
-            }}
+            type="button"
+            onClick={() => (canStopAnalysis ? stopAnalysis() : startAnalysis())}
             disabled={!canStartAnalysis && !canStopAnalysis}
             className={clsx(
-              'flex items-center gap-2 px-6 py-2 rounded-full font-bold transition-all text-white',
-              canStopAnalysis
-                ? 'bg-error/80 hover:bg-error shadow-[0_0_15px_rgba(255,180,171,0.4)]'
-                : 'bg-primary text-surface hover:bg-primary-container neon-glow',
-              !canStartAnalysis && !canStopAnalysis && 'opacity-60 cursor-not-allowed',
+              'rounded-xl px-5 py-2.5 text-sm font-bold transition-all',
+              canStopAnalysis ? 'bg-error/90 text-white hover:bg-error' : 'bg-primary-container text-on-primary-container hover:brightness-110',
+              !canStartAnalysis && !canStopAnalysis && 'cursor-not-allowed opacity-50',
             )}
           >
-            {canStopAnalysis ? <StopCircle className="w-5 h-5" /> : <PlayCircle className="w-5 h-5" />}
-            {canStopAnalysis ? 'Przerwij analizę' : 'Rozpocznij'}
+            {canStopAnalysis ? 'Przerwij' : 'Rozpocznij'}
           </button>
-        </div>
         </div>
       </header>
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void uploadVideo(file);
+        }}
+      />
+
       {connectionError && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-error/30 bg-error/15 px-4 py-3 text-error">
-          <WifiOff className="w-5 h-5 shrink-0" />
-          <span className="font-medium">{connectionError}</span>
+        <div className="mx-4 mt-4 flex items-center gap-2 rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-error md:mx-6">
+          <WifiOff className="h-5 w-5 shrink-0" />
+          <span className="text-sm font-medium">{connectionError}</span>
         </div>
       )}
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
-        <div className="lg:col-span-3 glass-card rounded-2xl overflow-hidden relative border-white/10 flex flex-col">
-          <div className="absolute top-4 left-4 right-4 flex flex-col gap-3 z-10 md:flex-row md:justify-between md:items-start">
-            <div className="flex items-center gap-2 bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 w-fit">
-              <div className={clsx('w-3 h-3 rounded-full', isAnalyzing ? 'bg-red-500 ai-pulse' : 'bg-gray-500')} />
-              <span className="text-sm font-medium text-white">{isAnalyzing ? 'ANALIZA LIVE' : 'STANDBY'}</span>
-            </div>
+      {showDualCamHint && (
+        <div className="mx-4 mt-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-100 md:mx-6">
+          <Info className="mt-0.5 h-5 w-5 shrink-0" />
+          <p className="text-sm">
+            <strong>Wskazówka:</strong> Podłącz telefon i wybierz <strong>Dual-Cam</strong> — dokładniejsza ocena ugięcia kolan.
+          </p>
+        </div>
+      )}
 
-            {metrics.postureWarnings && (
-              <div className="flex items-center gap-2 bg-error/20 text-error backdrop-blur-md px-4 py-2 rounded-lg border border-error/30">
-                <AlertTriangle className="w-5 h-5 shrink-0" />
-                <span className="font-bold">{metrics.postureWarnings}</span>
-              </div>
-            )}
-          </div>
+      <main className="grid flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-12 lg:p-6">
+        <div className="flex flex-col gap-4 lg:col-span-9">
+          <PhaseStepper current={metrics.fazaRuchu ?? 'OCZEKIWANIE'} />
 
-          <div className="flex-1 bg-black/40 flex items-center justify-center relative overflow-hidden">
+          <div className="relative aspect-video overflow-hidden rounded-2xl border border-white/10 bg-surface-container-high">
             {isPreparingVideo ? (
-              <div className="w-full max-w-md px-6 text-center">
-                <UploadCloud className="w-16 h-16 text-primary mx-auto ai-pulse" />
-                <p className="mt-4 text-white font-bold">Przygotowuję płynne odtwarzanie analizy</p>
-                <div className="mt-5 h-3 bg-surface-variant rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-primary transition-all duration-300"
-                    style={{ width: `${metrics.videoProcessingProgress}%` }}
-                  />
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                <UploadCloud className="h-16 w-16 text-primary pulse-orange" />
+                <p className="mt-4 font-display text-lg font-bold text-on-surface">Przygotowuję analizę wideo</p>
+                <div className="mt-5 h-2 w-full max-w-xs overflow-hidden rounded-full bg-white/10">
+                  <div className="h-full bg-primary-container transition-all" style={{ width: `${metrics.videoProcessingProgress}%` }} />
                 </div>
-                <p className="mt-3 text-on-surface-variant text-sm">{metrics.videoProcessingProgress}%</p>
+                <p className="mt-2 text-sm text-on-surface-variant">{metrics.videoProcessingProgress}%</p>
               </div>
             ) : isAnalyzing ? (
-              <img
-                src={`${apiUrl(cameraMode === 'dual' ? '/video_feed_dual' : '/video_feed')}?source=${metrics.source}&t=${feedKey}`}
-                alt="Strumień analizy live"
-                className="w-full h-full object-contain"
-              />
+              <>
+                <img
+                  src={`${apiUrl(cameraMode === 'dual' ? '/video_feed_dual' : '/video_feed')}?source=${metrics.source}&t=${feedKey}`}
+                  alt="Strumień analizy"
+                  className="h-full w-full object-contain"
+                />
+                {isFollowThrough && metrics.feedbackFazy && (
+                  <FollowThroughOverlay
+                    feedback={metrics.feedbackFazy}
+                    score={contactScore}
+                    gotowosc={metrics.gotowoscPrzedOdbiciem}
+                    postureWarnings={metrics.postureWarnings}
+                  />
+                )}
+              </>
             ) : (
-              <div className="flex flex-col items-center justify-center px-6 text-center">
-                <MonitorPlay className="w-24 h-24 text-white/10" />
-                <p className="mt-4 text-on-surface-variant/70 text-sm">
-                  Wybierz kamerę albo plik wideo, a potem rozpocznij analizę.
-                </p>
+              <div className="flex h-full flex-col items-center justify-center text-center">
+                <MonitorPlay className="h-20 w-20 text-white/15" />
+                <p className="mt-4 text-on-surface-variant">Wybierz źródło i kliknij Rozpocznij</p>
+                {selectedVideoName && metrics.source === 'file' && (
+                  <p className="mt-2 text-sm text-primary-container">Plik: {selectedVideoName}</p>
+                )}
               </div>
             )}
-          </div>
-        </div>
 
-        {/* ── HUD: Panel informacyjny ──────────────────────────────────── */}
-        <div className="flex flex-col gap-3 overflow-y-auto scrollbar-hide">
-
-          {/* Gotowość do odbicia — 4 kwadraciki */}
-          {metrics.gotowoscPrzedOdbiciem && (
-            <div className="glass-card p-4 rounded-2xl border border-white/10">
-              <p className="text-xs text-on-surface-variant font-medium mb-3">Pozycja przed odbiciem</p>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { key: 'stopa_ok', label: 'Stopy', ok: metrics.gotowoscPrzedOdbiciem.stopa_ok },
-                  { key: 'kolana_ok', label: 'Kolana', ok: metrics.gotowoscPrzedOdbiciem.kolana_ok },
-                  { key: 'platforma_ok', label: 'Ręce', ok: metrics.gotowoscPrzedOdbiciem.platforma_ok },
-                  { key: 'ruch_ok', label: 'Nogi', ok: metrics.gotowoscPrzedOdbiciem.ruch_ok },
-                ].map((item) => (
-                  <div key={item.key} className={clsx(
-                    'flex flex-col items-center gap-1 p-2 rounded-lg transition-all',
-                    item.ok ? 'bg-green-500/10' : 'bg-red-500/5',
-                  )}>
-                    <span className={clsx('text-base font-bold', item.ok ? 'text-green-400' : 'text-red-400/60')}>
-                      {item.ok ? '✓' : '✗'}
-                    </span>
-                    <span className={clsx('text-xs', item.ok ? 'text-green-400/80' : 'text-red-400/40')}>
-                      {item.label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Wynik odbicia — prosty blok po kontakcie */}
-          {isFollowThrough && metrics.feedbackFazy && (
-            <div className={clsx(
-              'glass-card p-4 rounded-2xl border contact-flash',
-              metrics.feedbackFazy.includes('✓')
-                ? 'border-green-500/30 bg-green-500/10'
-                : 'border-red-500/20 bg-red-500/5',
-            )}>
-              <p className={clsx(
-                'font-bold text-sm',
-                metrics.feedbackFazy.includes('✓') ? 'text-green-400' : 'text-red-400',
-              )}>
-                {metrics.feedbackFazy}
-              </p>
-            </div>
-          )}
-
-          {/* Siatka 2-kolumnowa: Ocena + Kolana */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* Skuteczność / PieChart */}
-            <div className="glass-card p-4 rounded-2xl border border-white/10 flex flex-col items-center">
-              <div className="relative w-20 h-20">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={pieData} innerRadius={25} outerRadius={35} paddingAngle={2} dataKey="value" stroke="none" animationDuration={500}>
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-lg font-bold text-white">{score}%</span>
+            {isAnalyzing && !isFollowThrough && (
+              <>
+                <div className="absolute left-4 top-4 flex items-center gap-2 rounded-lg bg-red-600 px-3 py-1.5 shadow-lg">
+                  <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-white" />
+                  <span className="text-xs font-bold uppercase tracking-widest text-white">Live</span>
                 </div>
-              </div>
-              <p className="text-xs text-on-surface-variant mt-2">Skuteczność</p>
-            </div>
 
-            {/* Kąt kolan + odbicia */}
-            <div className="glass-card p-4 rounded-2xl border border-white/10 flex flex-col justify-between">
-              <div>
-                <p className="text-xs text-on-surface-variant">Kolana</p>
-                <p className="text-3xl font-bold text-white font-h1">{metrics.kneeAngle}°</p>
-                <div className="w-full mt-2 h-1.5 bg-surface-variant rounded-full overflow-hidden">
+                {coachBanner && (
                   <div
-                    className="h-full bg-primary transition-all duration-300"
-                    style={{ width: `${Math.min(100, (metrics.kneeAngle / 180) * 100)}%` }}
-                  />
+                    className={clsx(
+                      'absolute left-1/2 top-4 max-w-[90%] -translate-x-1/2 rounded-full border px-5 py-2.5 shadow-lg backdrop-blur-md',
+                      bannerPositive
+                        ? 'border-success/40 bg-success/20 text-green-100'
+                        : 'border-primary-container/50 bg-primary-container/25 text-on-surface',
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      {bannerPositive ? (
+                        <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+                      ) : (
+                        <AlertTriangle className="h-5 w-5 shrink-0 text-primary" />
+                      )}
+                      <span className="font-display text-base font-bold md:text-lg">{coachBanner}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="absolute bottom-4 left-4 flex flex-wrap items-center gap-4 rounded-xl glass-panel p-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-on-surface-variant">Rozstaw stóp</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="h-2 w-32 overflow-hidden rounded-full bg-white/10">
+                        <div className="h-full bg-primary" style={{ width: `${footSpreadPercent(metrics.rozstawienieStop)}%` }} />
+                      </div>
+                      <span className="text-sm font-bold text-on-surface">
+                        {metrics.rozstawienieStop != null ? metrics.rozstawienieStop.toFixed(2) : '—'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="h-10 w-px bg-white/10" />
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-on-surface-variant">Odbicia</p>
+                    <p className="font-display text-2xl font-bold text-primary-container">{metrics.totalContacts}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="mt-3 pt-3 border-t border-white/5">
-                <p className="text-xs text-on-surface-variant">Odbicia</p>
-                <p className="text-2xl font-bold text-white">{metrics.totalContacts}</p>
+              </>
+            )}
+          </div>
+
+          <div className="flex gap-2 overflow-x-auto md:hidden">
+            {sourceButtons.map((btn) => (
+              <button
+                key={btn.id}
+                type="button"
+                onClick={btn.action}
+                className={clsx(
+                  'shrink-0 rounded-lg border px-3 py-2 text-xs font-semibold',
+                  btn.active ? 'border-primary bg-primary/10 text-primary' : 'border-white/10 text-on-surface-variant',
+                )}
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <aside className="flex flex-col gap-4 lg:col-span-3">
+          <div className="glass-card rounded-2xl p-5">
+            <ReadinessTiles gotowosc={metrics.gotowoscPrzedOdbiciem} postureWarnings={metrics.postureWarnings} />
+          </div>
+
+          <div className="glass-card rounded-2xl p-5 text-center">
+            <p className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Efektywność sesji</p>
+            <div className="relative mx-auto my-4 h-36 w-36">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} innerRadius={48} outerRadius={62} dataKey="value" stroke="none">
+                    {pieData.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="font-display text-3xl font-bold">{score}%</span>
               </div>
             </div>
           </div>
 
-          {/* Pasek fuzji (dual-cam) */}
+          <div className="glass-card rounded-2xl p-5">
+            <p className="text-xs font-semibold uppercase text-on-surface-variant">Kąt kolan</p>
+            <p className="font-display text-4xl font-bold text-primary-container">{metrics.kneeAngle}°</p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full bg-secondary transition-all" style={{ width: `${Math.min(100, (metrics.kneeAngle / 180) * 100)}%` }} />
+            </div>
+          </div>
+
           {cameraMode === 'dual' && metrics.fuzjaOcena !== undefined && (
-            <div className="glass-card p-4 rounded-2xl border border-white/10">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-on-surface-variant font-medium">Fuzja obu kamer</span>
-                <span className="text-sm text-white font-bold">{metrics.fuzjaOcena}/100</span>
+            <div className="glass-card rounded-2xl p-5">
+              <div className="mb-2 flex justify-between text-sm">
+                <span className="text-on-surface-variant">Fuzja kamer</span>
+                <span className="font-bold text-on-surface">{metrics.fuzjaOcena}/100</span>
               </div>
-              <div className="h-2 bg-surface-variant rounded-full overflow-hidden">
-                <div className="h-full bg-secondary transition-all duration-500 rounded-full" style={{ width: `${metrics.fuzjaOcena}%` }} />
+              <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full bg-secondary transition-all" style={{ width: `${metrics.fuzjaOcena}%` }} />
               </div>
             </div>
           )}
-        </div>
-      </div>
+
+          {!isFollowThrough && metrics.feedbackFazy && isAnalyzing && (
+            <div className="glass-card rounded-2xl border border-white/10 p-4 text-sm text-on-surface-variant">{metrics.feedbackFazy}</div>
+          )}
+        </aside>
+      </main>
     </div>
   );
 }

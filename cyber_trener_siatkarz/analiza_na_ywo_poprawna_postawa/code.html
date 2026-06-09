@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="pl"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Cyber-Trener | Analiza na żywo</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glass-panel {
+            background: rgba(28, 17, 11, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .pulse-green {
+            animation: pulse-green 2s infinite;
+        }
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(74, 222, 128, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+        }
+        .skeleton-line {
+            stroke: #4ade80;
+            stroke-width: 3;
+            stroke-linecap: round;
+            filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.6));
+        }
+        .skeleton-joint {
+            fill: #ffffff;
+            stroke: #4ade80;
+            stroke-width: 2;
+        }
+    </style>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "secondary": "#7bd0ff",
+                    "on-error": "#690005",
+                    "on-primary-container": "#582200",
+                    "surface": "#1c110b",
+                    "surface-dim": "#1c110b",
+                    "secondary-fixed": "#c4e7ff",
+                    "on-primary": "#552100",
+                    "primary-container": "#f97316",
+                    "surface-container-lowest": "#160c06",
+                    "primary-fixed-dim": "#ffb690",
+                    "on-error-container": "#ffdad6",
+                    "inverse-primary": "#9d4300",
+                    "on-secondary-fixed-variant": "#004c69",
+                    "tertiary": "#d3bbff",
+                    "surface-tint": "#ffb690",
+                    "outline": "#a78b7d",
+                    "inverse-on-surface": "#3c2d26",
+                    "on-surface-variant": "#e0c0b1",
+                    "on-tertiary-fixed": "#260059",
+                    "on-primary-fixed": "#341100",
+                    "on-secondary-fixed": "#001e2c",
+                    "secondary-fixed-dim": "#7bd0ff",
+                    "error-container": "#93000a",
+                    "surface-bright": "#45362f",
+                    "on-tertiary-fixed-variant": "#5b00c5",
+                    "inverse-surface": "#f6ded3",
+                    "tertiary-container": "#ad83ff",
+                    "on-background": "#f6ded3",
+                    "surface-container-highest": "#40322a",
+                    "tertiary-fixed-dim": "#d3bbff",
+                    "on-surface": "#f6ded3",
+                    "background": "#1c110b",
+                    "outline-variant": "#584237",
+                    "surface-container-high": "#352720",
+                    "on-tertiary-container": "#410091",
+                    "error": "#ffb4ab",
+                    "surface-container": "#291d16",
+                    "primary-fixed": "#ffdbca",
+                    "on-secondary": "#00354a",
+                    "primary": "#ffb690",
+                    "on-secondary-container": "#00374d",
+                    "surface-variant": "#40322a",
+                    "on-tertiary": "#3f008d",
+                    "secondary-container": "#00a6e0",
+                    "surface-container-low": "#251913",
+                    "on-primary-fixed-variant": "#783200",
+                    "tertiary-fixed": "#ebddff"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.25rem",
+                    "lg": "0.5rem",
+                    "xl": "0.75rem",
+                    "full": "9999px"
+            },
+            "spacing": {
+                    "md": "24px",
+                    "xl": "64px",
+                    "sidebar-collapsed": "80px",
+                    "lg": "40px",
+                    "sm": "16px",
+                    "base": "4px",
+                    "sidebar-width": "260px",
+                    "xs": "8px",
+                    "container-max": "1440px"
+            },
+            "fontFamily": {
+                    "headline-xl": ["Space Grotesk"],
+                    "headline-lg-mobile": ["Space Grotesk"],
+                    "headline-md": ["Space Grotesk"],
+                    "headline-lg": ["Space Grotesk"],
+                    "body-lg": ["Inter"],
+                    "label-sm": ["Inter"],
+                    "kpi-value": ["Space Grotesk"],
+                    "body-md": ["Inter"]
+            },
+            "fontSize": {
+                    "headline-xl": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                    "headline-md": ["20px", {"lineHeight": "28px", "fontWeight": "500"}],
+                    "headline-lg": ["32px", {"lineHeight": "40px", "fontWeight": "600"}],
+                    "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                    "label-sm": ["14px", {"lineHeight": "20px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                    "kpi-value": ["36px", {"lineHeight": "44px", "fontWeight": "700"}],
+                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}]
+            }
+          },
+        },
+      }
+    </script>
+</head>
+<body class="bg-background text-on-surface font-body-md selection:bg-primary/30 min-h-screen flex flex-col">
+<!-- Top Navigation Bar -->
+<header class="h-20 flex items-center justify-between px-md glass-panel z-50 sticky top-0">
+<div class="flex items-center gap-md">
+<div class="flex items-center gap-xs">
+<span class="material-symbols-outlined text-primary text-3xl">analytics</span>
+<h1 class="font-headline-md text-headline-md tracking-tight uppercase">Analiza</h1>
+</div>
+<div class="h-8 w-px bg-white/10"></div>
+<div class="flex items-center gap-sm">
+<div class="flex items-center gap-xs px-sm py-1 bg-green-500/10 border border-green-500/20 rounded-full">
+<span class="w-2 h-2 rounded-full bg-green-500"></span>
+<span class="font-label-sm text-label-sm text-green-400">Połączono</span>
+</div>
+<div class="flex items-center gap-xs px-sm py-1 bg-white/5 border border-white/10 rounded-full">
+<span class="material-symbols-outlined text-sm text-on-surface-variant">timer</span>
+<span class="font-label-sm text-label-sm font-mono tracking-wider">14:22:08</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-md">
+<div class="flex bg-surface-container rounded-lg p-1">
+<button class="px-sm py-1.5 rounded-md font-label-sm text-label-sm transition-all bg-white/5 text-on-surface">Kamera front</button>
+<button class="px-sm py-1.5 rounded-md font-label-sm text-label-sm transition-all hover:bg-white/5 text-on-surface-variant">Kamera bok</button>
+<button class="px-sm py-1.5 rounded-md font-label-sm text-label-sm transition-all hover:bg-white/5 text-on-surface-variant">Dual-Cam</button>
+<button class="px-sm py-1.5 rounded-md font-label-sm text-label-sm transition-all hover:bg-white/5 text-on-surface-variant">Plik</button>
+</div>
+<button class="p-2 hover:bg-white/5 rounded-full transition-colors text-on-surface-variant">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</header>
+<main class="flex-grow grid grid-cols-12 gap-md p-md max-w-container-max mx-auto w-full">
+<!-- Left: Phase Stepper & Main View -->
+<div class="col-span-12 lg:col-span-9 flex flex-col gap-md">
+<!-- Phase Stepper -->
+<div class="flex justify-between items-center px-lg py-sm glass-panel rounded-xl">
+<div class="flex items-center gap-sm group">
+<div class="w-10 h-10 rounded-full bg-primary text-on-primary-container flex items-center justify-center font-bold font-headline-md ring-4 ring-primary/20">1</div>
+<span class="font-label-sm text-label-sm text-primary uppercase tracking-widest">Oczekiwanie</span>
+</div>
+<div class="flex-grow h-px bg-white/10 mx-md"></div>
+<div class="flex items-center gap-sm opacity-40">
+<div class="w-10 h-10 rounded-full border-2 border-on-surface-variant flex items-center justify-center font-bold font-headline-md">2</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Nabieg</span>
+</div>
+<div class="flex-grow h-px bg-white/10 mx-md"></div>
+<div class="flex items-center gap-sm opacity-40">
+<div class="w-10 h-10 rounded-full border-2 border-on-surface-variant flex items-center justify-center font-bold font-headline-md">3</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Wyskoku</span>
+</div>
+<div class="flex-grow h-px bg-white/10 mx-md"></div>
+<div class="flex items-center gap-sm opacity-40">
+<div class="w-10 h-10 rounded-full border-2 border-on-surface-variant flex items-center justify-center font-bold font-headline-md">4</div>
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Uderzenie</span>
+</div>
+</div>
+<!-- Video/Analysis Canvas -->
+<div class="relative aspect-video rounded-2xl overflow-hidden bg-surface-container-high group border border-white/5">
+<img alt="Volleyball player in waiting stance" class="w-full h-full object-cover grayscale-[0.2]" data-alt="A professional male volleyball player in a ready athletic stance on a high-end indoor volleyball court. He is wearing high-performance athletic gear in navy and orange. The scene is captured from a front camera angle with cinematic lighting. Overlaid on the player is a semi-transparent glowing green biomechanical skeleton tracking his joints. The environment is sharp and data-focused with subtle motion blur on the edges." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCATkJ1riQZUhq035FznA4mKOfQa-IDMRRsTlq8-DoTVChEZ8W5a2r7A67t9LtJ_yHtbXNMA4ne-nLtIokRBKmzHny7moUxKj_Dr_dmpOGr7ikzNKEVDQPJJrx27cimX2dfHqD6TG_EIm87ggghOQPP9ySHWHT3JmRKjjvJsdmApsLdM6RPzPDIReMSebRnzaWIeNkE4h5URnmTKL8jTrOMLqK8Ff1MGy7_OxZm56tXSTnQmknPVqdS2XsfOsbW3m2zsnNv9tPxGA"/>
+<!-- Skeleton Overlay -->
+<svg class="absolute inset-0 w-full h-full pointer-events-none opacity-80" viewbox="0 0 1000 562">
+<!-- Lines -->
+<line class="skeleton-line" x1="500" x2="500" y1="120" y2="280"></line> <!-- Torso -->
+<line class="skeleton-line" x1="500" x2="420" y1="150" y2="180"></line> <!-- L Arm -->
+<line class="skeleton-line" x1="500" x2="580" y1="150" y2="180"></line> <!-- R Arm -->
+<line class="skeleton-line" x1="420" x2="400" y1="180" y2="280"></line> <!-- L Forearm -->
+<line class="skeleton-line" x1="580" x2="600" y1="180" y2="280"></line> <!-- R Forearm -->
+<line class="skeleton-line" x1="500" x2="460" y1="280" y2="400"></line> <!-- L Thigh -->
+<line class="skeleton-line" x1="500" x2="540" y1="280" y2="400"></line> <!-- R Thigh -->
+<line class="skeleton-line" x1="460" x2="440" y1="400" y2="520"></line> <!-- L Shin -->
+<line class="skeleton-line" x1="540" x2="560" y1="400" y2="520"></line> <!-- R Shin -->
+<!-- Joints -->
+<circle class="skeleton-joint" cx="500" cy="120" r="6"></circle> <!-- Head -->
+<circle class="skeleton-joint" cx="500" cy="150" r="4"></circle> <!-- Neck -->
+<circle class="skeleton-joint" cx="420" cy="180" r="4"></circle> <!-- L Shoulder -->
+<circle class="skeleton-joint" cx="580" cy="180" r="4"></circle> <!-- R Shoulder -->
+<circle class="skeleton-joint" cx="400" cy="280" r="4"></circle> <!-- L Wrist -->
+<circle class="skeleton-joint" cx="600" cy="280" r="4"></circle> <!-- R Wrist -->
+<circle class="skeleton-joint" cx="460" cy="400" r="4"></circle> <!-- L Knee -->
+<circle class="skeleton-joint" cx="540" cy="400" r="4"></circle> <!-- R Knee -->
+<circle class="skeleton-joint" cx="440" cy="520" r="4"></circle> <!-- L Ankle -->
+<circle class="skeleton-joint" cx="560" cy="520" r="4"></circle> <!-- R Ankle -->
+</svg>
+<!-- Status Overlays -->
+<div class="absolute top-md left-md flex flex-col gap-sm">
+<div class="flex items-center gap-xs px-sm py-1.5 bg-red-600 rounded-lg shadow-lg">
+<span class="w-2.5 h-2.5 rounded-full bg-white animate-pulse"></span>
+<span class="font-label-sm text-label-sm text-white font-bold uppercase tracking-widest">LIVE</span>
+</div>
+</div>
+<div class="absolute top-md inset-x-0 flex justify-center">
+<div class="px-md py-2.5 glass-panel bg-green-500/20 border-green-500/40 rounded-full flex items-center gap-sm pulse-green">
+<span class="material-symbols-outlined text-green-400">check_circle</span>
+<span class="font-headline-md text-headline-md text-green-100 font-bold">Pozycja wygląda dobrze</span>
+</div>
+</div>
+<!-- Interactive UI elements -->
+<div class="absolute bottom-md left-md flex items-center gap-md glass-panel p-md rounded-xl">
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Rozstaw stóp</span>
+<div class="flex items-center gap-sm mt-xs">
+<div class="w-48 h-2.5 bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[72%]"></div>
+</div>
+<span class="font-kpi-value text-body-md font-bold">0.68m</span>
+</div>
+</div>
+<div class="w-px h-10 bg-white/10"></div>
+<div class="flex flex-col">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Licznik uderzeń</span>
+<span class="font-kpi-value text-kpi-value text-primary leading-none mt-xs">12</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Right: Metrics Panel -->
+<aside class="col-span-12 lg:col-span-3 flex flex-col gap-md">
+<!-- Effectiveness Card -->
+<div class="glass-panel p-md rounded-2xl flex flex-col items-center text-center">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase mb-md">Efektywność sesji</span>
+<div class="relative w-40 h-40">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 100 100">
+<circle class="text-white/5" cx="50" cy="50" fill="none" r="45" stroke="currentColor" stroke-width="8"></circle>
+<circle class="text-primary" cx="50" cy="50" fill="none" r="45" stroke="currentColor" stroke-dasharray="282.7" stroke-dashoffset="62.2" stroke-width="8"></circle>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="font-kpi-value text-kpi-value">78%</span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">+4% ↑</span>
+</div>
+</div>
+</div>
+<!-- Detailed Metrics -->
+<div class="grid grid-cols-1 gap-sm">
+<div class="glass-panel p-md rounded-xl flex justify-between items-center">
+<div>
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase">Kąt kolan</span>
+<h4 class="font-kpi-value text-headline-lg text-primary">142°</h4>
+</div>
+<span class="material-symbols-outlined text-green-400 text-3xl">straighten</span>
+</div>
+</div>
+<!-- Readiness Tiles -->
+<div class="glass-panel p-md rounded-2xl">
+<span class="font-label-sm text-label-sm text-on-surface-variant uppercase block mb-md">Gotowość segmentów</span>
+<div class="flex flex-col gap-sm">
+<div class="flex items-center justify-between p-sm bg-white/5 rounded-lg border-l-4 border-green-500">
+<span class="font-body-md text-body-md">Stopy</span>
+<span class="material-symbols-outlined text-green-400">check_circle</span>
+</div>
+<div class="flex items-center justify-between p-sm bg-white/5 rounded-lg border-l-4 border-green-500">
+<span class="font-body-md text-body-md">Kolana</span>
+<span class="material-symbols-outlined text-green-400">check_circle</span>
+</div>
+<div class="flex items-center justify-between p-sm bg-white/5 rounded-lg border-l-4 border-green-500">
+<span class="font-body-md text-body-md">Łokcie</span>
+<span class="material-symbols-outlined text-green-400">check_circle</span>
+</div>
+<div class="flex items-center justify-between p-sm bg-white/5 rounded-lg border-l-4 border-green-500">
+<span class="font-body-md text-body-md">Ręce</span>
+<span class="material-symbols-outlined text-green-400">check_circle</span>
+</div>
+<div class="flex items-center justify-between p-sm bg-white/5 rounded-lg border-l-4 border-green-500">
+<span class="font-body-md text-body-md">Nogi</span>
+<span class="material-symbols-outlined text-green-400">check_circle</span>
+</div>
+</div>
+</div>
+<!-- Action Buttons -->
+<button class="w-full py-md bg-primary text-on-primary-container font-headline-md text-headline-md rounded-xl hover:scale-[0.98] transition-transform active:scale-95 shadow-lg shadow-primary/20">
+                Rozpocznij Nagrywanie
+            </button>
+<button class="w-full py-md border border-primary text-primary font-headline-md text-headline-md rounded-xl hover:bg-primary/10 transition-colors">
+                Kalibracja AI
+            </button>
+</aside>
+</main>
+<!-- Footer -->
+<footer class="mt-auto glass-panel">
+<div class="flex justify-between items-center px-xl max-w-container-max mx-auto w-full py-md">
+<div class="flex items-center gap-md">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Realizacja: Zespół Cyber-Trener</span>
+<div class="h-4 w-px bg-white/10"></div>
+<div class="flex items-center gap-sm">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+<span class="font-label-sm text-label-sm text-on-surface-variant">Przetwarzanie w czasie rzeczywistym</span>
+</div>
+</div>
+<div class="flex gap-lg">
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">Polityka prywatności</a>
+<a class="font-label-sm text-label-sm text-on-surface-variant hover:text-primary transition-colors" href="#">Pomoc</a>
+</div>
+</div>
+</footer>
+<script>
+        // Micro-interaction for the effectiveness donut
+        const progressCircle = document.querySelector('circle.text-primary');
+        if (progressCircle) {
+            let offset = 282.7; // Full circumference
+            const target = 282.7 - (282.7 * 0.78);
+            
+            const animateProgress = () => {
+                if (offset > target) {
+                    offset -= 1.5;
+                    progressCircle.style.strokeDashoffset = offset;
+                    requestAnimationFrame(animateProgress);
+                }
+            };
+            setTimeout(animateProgress, 500);
+        }
+
+        // Simulating coordinate changes for the skeleton
+        const skeletonJoints = document.querySelectorAll('.skeleton-joint');
+        setInterval(() => {
+            skeletonJoints.forEach(joint => {
+                const cx = parseFloat(joint.getAttribute('cx'));
+                const cy = parseFloat(joint.getAttribute('cy'));
+                const dx = (Math.random() - 0.5) * 0.8;
+                const dy = (Math.random() - 0.5) * 0.8;
+                joint.setAttribute('cx', cx + dx);
+                joint.setAttribute('cy', cy + dy);
+            });
+        }, 100);
+    </script>
+</body></html>

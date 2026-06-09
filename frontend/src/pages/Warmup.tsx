@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, Flame, Pause, Play, RotateCcw, Timer, Volleyball } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
+import ExerciseIllustration from '../components/warmup/ExerciseIllustration';
 
 type WarmupMode = 'short' | 'standard' | 'strong';
 
@@ -184,19 +185,15 @@ export default function Warmup() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto flex flex-col gap-6 pb-10">
+    <div className="mx-auto flex max-w-container flex-col gap-6 pb-10">
       <header className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Rozgrzewka</h2>
-          <p className="text-on-surface-variant">
+          <h1 className="font-display text-headline-lg text-on-surface">Rozgrzewka</h1>
+          <p className="mt-1 text-on-surface-variant">
             Wybierz wariant i przejdź przez krótkie przygotowanie przed analizą z kamery.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => navigate('/live')}
-          className="flex w-fit items-center gap-2 rounded-full bg-primary px-5 py-3 font-bold text-surface transition hover:bg-primary-container"
-        >
+        <button type="button" onClick={() => navigate('/live')} className="btn-primary flex w-fit items-center gap-2">
           Przejdź do analizy
           <ArrowRight className="h-5 w-5" />
         </button>
@@ -226,14 +223,19 @@ export default function Warmup() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
         <section className="glass-card rounded-2xl p-6">
-          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-sm text-on-surface-variant">Teraz wykonuj</p>
-              <h3 className="mt-1 text-3xl font-bold text-white">{currentExercise.name}</h3>
+          <div className="mb-6 grid gap-6 md:grid-cols-[200px_1fr] md:items-center">
+            <div className="mx-auto flex h-40 w-full max-w-[200px] items-center justify-center rounded-2xl border border-white/10 bg-surface-container-high/50 p-4">
+              <ExerciseIllustration name={currentExercise.name} />
             </div>
-            <div className="flex items-center gap-3 rounded-2xl bg-black/25 px-5 py-4">
-              <Timer className="h-7 w-7 text-primary" />
-              <span className="text-5xl font-bold text-white tabular-nums">{formatTime(timeLeft)}</span>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-on-surface-variant">Teraz wykonuj</p>
+                <h3 className="mt-1 font-display text-3xl font-bold text-on-surface">{currentExercise.name}</h3>
+              </div>
+              <div className="flex items-center gap-3 rounded-2xl bg-black/25 px-5 py-4">
+                <Timer className="h-7 w-7 text-primary" />
+                <span className="font-display text-5xl font-bold tabular-nums text-on-surface">{formatTime(timeLeft)}</span>
+              </div>
             </div>
           </div>
 
