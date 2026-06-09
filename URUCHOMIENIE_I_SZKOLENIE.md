@@ -43,9 +43,19 @@ VITE_WS_BASE_URL=ws://127.0.0.1:8000
 
 ### 2.2 Backend — pierwsze uruchomienie
 
+**Windows:**
+
 ```powershell
 cd D:\STUDIA\wirtualny-trener-grupa-uran
-.\start-backend.ps1
+.\odpalanie\windows\start-backend.ps1
+```
+
+**macOS:**
+
+```bash
+cd /ścieżka/do/wirtualny-trener-grupa-uran
+chmod +x odpalanie/macos/*.sh   # tylko przy pierwszym uruchomieniu
+./odpalanie/macos/start-backend.sh
 ```
 
 Skrypt:
@@ -57,11 +67,21 @@ Przy pierwszym uruchomieniu Ultralytics może pobrać model YOLO (domyślnie `yo
 
 ### 2.3 Frontend
 
+**Windows:**
+
 ```powershell
-.\start-frontend.ps1
+.\odpalanie\windows\start-frontend.ps1
+```
+
+**macOS:**
+
+```bash
+./odpalanie/macos/start-frontend.sh
 ```
 
 Aplikacja: **http://localhost:5173**
+
+Pełna lista skryptów: [odpalanie/README.md](./odpalanie/README.md)
 
 ---
 
@@ -141,7 +161,7 @@ Przed startem backendu (PowerShell):
 $env:VOICE_ENABLED="1"
 $env:TTS_ENGINE="edge"
 $env:TTS_VOICE="pl-PL-ZofiaNeural"
-.\start-backend.ps1
+.\odpalanie\windows\start-backend.ps1
 ```
 
 Lub dodaj `VOICE_ENABLED=1` do pliku `.env`.
@@ -213,7 +233,7 @@ $env:LIVE_STREAM_WIDTH="720"
 $env:LIVE_ANALYSIS_WIDTH="480"
 $env:LIVE_POSE_EVERY_N_FRAMES="4"
 $env:LIVE_BALL_EVERY_N_FRAMES="8"
-.\start-backend.ps1
+.\odpalanie\windows\start-backend.ps1
 ```
 
 | Zmienna | Znaczenie |
@@ -311,18 +331,23 @@ Zgodnie z [KONSULTACJA_TRENERA.md](./KONSULTACJA_TRENERA.md) — bez pochylenia 
 
 ---
 
-## 14. macOS / Linux (bez skryptów .ps1)
+## 14. macOS — skrypty startowe
 
-**Backend:**
+Skrypty w `odpalanie/macos/` robią to samo co wersja Windows (venv, `pip install`, `npm install`).
+
+```bash
+./odpalanie/macos/start-backend.sh
+./odpalanie/macos/start-frontend.sh
+```
+
+**Ręcznie (gdy skrypt nie działa):**
 
 ```bash
 python3.11 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 ```
-
-**Frontend:**
 
 ```bash
 cd frontend && npm install && npm run dev

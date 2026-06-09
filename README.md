@@ -92,28 +92,42 @@ wirtualny-trener-grupa-uran/
 ├── data/
 │   ├── models/               # Model Vosk PL (pobierany przy pierwszym użyciu)
 │   └── uploads/              # Wgrane wideo + przetworzone klatki
-├── start-backend.ps1         # Uruchomienie backendu (Windows)
-├── start-frontend.ps1        # Uruchomienie frontendu (Windows)
+├── odpalanie/
+│   ├── windows/              # Skrypty PowerShell (.ps1)
+│   └── macos/                # Skrypty bash (.sh)
 ├── KONSULTACJA_TRENERA.md    # Ustalenia merytoryczne z trenerem
 └── URUCHOMIENIE_I_SZKOLENIE.md
 ```
 
 ---
 
-## Szybki start (Windows)
+## Szybki start
 
 Wymagania: Python 3.11, Node.js 20+, kamera lub plik wideo, plik `.env` z kluczami Supabase (patrz [URUCHOMIENIE_I_SZKOLENIE.md](./URUCHOMIENIE_I_SZKOLENIE.md)).
 
+**Windows (PowerShell):**
+
 ```powershell
 # Terminal 1 — backend
-.\start-backend.ps1
+.\odpalanie\windows\start-backend.ps1
 
 # Terminal 2 — frontend
-.\start-frontend.ps1
+.\odpalanie\windows\start-frontend.ps1
+```
+
+**macOS (Terminal):**
+
+```bash
+chmod +x odpalanie/macos/*.sh   # tylko przy pierwszym uruchomieniu
+
+./odpalanie/macos/start-backend.sh   # terminal 1
+./odpalanie/macos/start-frontend.sh  # terminal 2
 ```
 
 Aplikacja: **http://localhost:5173**  
 API: **http://localhost:8000**
+
+Więcej: [odpalanie/README.md](./odpalanie/README.md)
 
 ---
 
