@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$frontend = Join-Path $PSScriptRoot "frontend"
+$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$frontend = Join-Path $ProjectRoot "frontend"
 
 Write-Host "Instaluje/aktualizuje zaleznosci frontendu..."
 Push-Location $frontend
