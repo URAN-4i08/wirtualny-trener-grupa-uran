@@ -2,7 +2,7 @@
 
 **Cyber Trener** to stacjonarny system wspomagający naukę **odbicia piłki sposobem dolnym** w siatkówce. Aplikacja analizuje postawę i moment kontaktu z piłką za pomocą kamery, daje podpowiedzi na żywo oraz krótkie podsumowanie po każdym odbiciu — tak, aby ćwiczący mógł skupić się na ruchu, a nie na patrzeniu w ekran.
 
-Projekt realizowany w ramach przedmiotu KCK (*Cyber trener*) — Politechnika / grupa URAN.
+Projekt realizowany w ramach przedmiotu KCK (*Cyber trener*) — Politechnika Łódzka / grupa URAN.
 
 ---
 
