@@ -1,34 +1,32 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import LiveAnalysis from './pages/LiveAnalysis';
 import History from './pages/History';
 import Warmup from './pages/Warmup';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import VoiceCommands from './pages/VoiceCommands';
 import { VoiceCommandProvider } from './context/VoiceCommandContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import AppShell from './components/layout/AppShell';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-navy text-on-surface-variant">
+        Ładowanie...
+      </div>
+    );
+  }
   if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 };
 
 const StartRoute = () => {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+  if (loading) return null;
   return <Navigate to={user ? '/dashboard' : '/login'} replace />;
-};
-
-const Layout = ({ children }: { children: React.ReactNode }) => {
-  return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
-      <Sidebar />
-      <main className="flex-1 h-full overflow-y-auto overflow-x-hidden p-6">
-        {children}
-      </main>
-    </div>
-  );
 };
 
 function App() {
@@ -40,10 +38,19 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/" element={<StartRoute />} />
-            <Route path="/dashboard" element={<ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>} />
-            <Route path="/warmup" element={<ProtectedRoute><Layout><Warmup /></Layout></ProtectedRoute>} />
-            <Route path="/live" element={<ProtectedRoute><Layout><LiveAnalysis /></Layout></ProtectedRoute>} />
-            <Route path="/history" element={<ProtectedRoute><Layout><History /></Layout></ProtectedRoute>} />
+            <Route
+              element={
+                <ProtectedRoute>
+                  <AppShell />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/warmup" element={<Warmup />} />
+              <Route path="/live" element={<LiveAnalysis />} />
+              <Route path="/history" element={<History />} />
+              <Route path="/voice-commands" element={<VoiceCommands />} />
+            </Route>
           </Routes>
         </VoiceCommandProvider>
       </Router>

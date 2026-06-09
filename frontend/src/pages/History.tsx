@@ -11,6 +11,8 @@ import {
   getMainIssue,
   type TrainingWithStats,
 } from '../lib/trainingData';
+import { deriveElementScoresFromTraining } from '../lib/elementScores';
+import ElementBars from '../components/ui/ElementBars';
 
 export default function History() {
   const { user } = useAuth();
@@ -22,14 +24,14 @@ export default function History() {
 
   useEffect(() => {
     if (!user) return;
-
     let cancelled = false;
     setLoading(true);
-    setError(null);
-
     fetchUserTrainings(user.id)
       .then((result) => {
-        if (!cancelled) setTrainings(result);
+        if (!cancelled) {
+          setTrainings(result);
+          setSelectedTraining(result[0] ?? null);
+        }
       })
       .catch(() => {
         if (!cancelled) setError('Nie udało się pobrać historii z bazy.');
@@ -37,67 +39,56 @@ export default function History() {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
-
     return () => {
       cancelled = true;
     };
   }, [user]);
 
   async function handleDelete(trainingId: string) {
-    const confirmed = window.confirm('Usunąć ten trening z historii? Tej operacji nie da się cofnąć.');
-    if (!confirmed) return;
-
+    if (!window.confirm('Usunąć ten trening z historii?')) return;
     setDeletingId(trainingId);
-    setError(null);
-
     try {
       await deleteTraining(trainingId);
-      setTrainings((current) => current.filter((training) => training.id !== trainingId));
+      setTrainings((current) => current.filter((t) => t.id !== trainingId));
       setSelectedTraining((current) => (current?.id === trainingId ? null : current));
     } catch {
-      setError('Nie udało się usunąć treningu z bazy.');
+      setError('Nie udało się usunąć treningu.');
     } finally {
       setDeletingId(null);
     }
   }
 
+  const selectedScores = deriveElementScoresFromTraining(selectedTraining);
+
   return (
-    <div className="max-w-6xl mx-auto flex flex-col gap-6">
+    <div className="mx-auto max-w-container space-y-6">
       <header>
-        <h2 className="text-3xl font-bold text-white mb-2">Historia treningów</h2>
-        <p className="text-on-surface-variant">Realne sesje zapisane w bazie: kamera i plik wideo razem.</p>
+        <h1 className="font-display text-headline-lg text-on-surface">Historia treningów</h1>
+        <p className="mt-1 text-on-surface-variant">Zapisane sesje z kamery i pliku wideo.</p>
       </header>
 
-      {error && (
-        <div className="rounded-lg border border-error/30 bg-error/15 px-4 py-3 text-error font-medium">
-          {error}
-        </div>
-      )}
+      {error && <div className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-error">{error}</div>}
 
       {loading ? (
-        <div className="glass-card rounded-2xl p-8 text-on-surface-variant">Ładowanie historii...</div>
+        <div className="glass-card p-10 text-center text-on-surface-variant">Ładowanie historii...</div>
       ) : trainings.length === 0 ? (
-        <div className="glass-card rounded-2xl p-8">
-          <Calendar className="w-10 h-10 text-primary mb-4" />
-          <h3 className="text-xl font-bold text-white mb-2">Brak historii</h3>
-          <p className="text-on-surface-variant">
-            Po zakończeniu analizy kamery albo pliku trening zapisze się tutaj automatycznie.
-          </p>
+        <div className="glass-card p-10 text-center">
+          <Calendar className="mx-auto mb-4 h-10 w-10 text-primary" />
+          <h2 className="font-display text-xl font-bold">Brak historii</h2>
+          <p className="mt-2 text-on-surface-variant">Po zakończeniu analizy trening zapisze się automatycznie.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6">
-          <div className="glass-card rounded-2xl overflow-hidden border-white/10">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_340px]">
+          <div className="glass-card overflow-hidden rounded-xl">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[820px]">
+              <table className="w-full min-w-[760px] text-left text-sm">
                 <thead>
-                  <tr className="border-b border-white/10 bg-surface-variant/30">
-                    <th className="py-4 px-6 text-on-surface-variant font-medium text-sm">Data</th>
-                    <th className="py-4 px-6 text-on-surface-variant font-medium text-sm">Źródło</th>
-                    <th className="py-4 px-6 text-on-surface-variant font-medium text-sm">Czas</th>
-                    <th className="py-4 px-6 text-on-surface-variant font-medium text-sm">Wynik</th>
-                    <th className="py-4 px-6 text-on-surface-variant font-medium text-sm">Odbicia</th>
-                    <th className="py-4 px-6 text-on-surface-variant font-medium text-sm">Problem</th>
-                    <th className="py-4 px-6"></th>
+                  <tr className="border-b border-white/10 bg-surface-container-high/40">
+                    {['Data', 'Źródło', 'Czas', 'Wynik', 'Odbicia', 'Problem', ''].map((h) => (
+                      <th key={h} className="px-5 py-4 font-semibold text-on-surface-variant">
+                        {h}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -105,53 +96,49 @@ export default function History() {
                     <tr
                       key={training.id}
                       className={clsx(
-                        'border-b border-white/5 hover:bg-white/5 transition-colors group',
-                        selectedTraining?.id === training.id && 'bg-primary/10',
+                        'border-b border-white/5 transition-colors hover:bg-white/5',
+                        selectedTraining?.id === training.id && 'bg-primary-container/10',
                       )}
                     >
-                      <td className="py-4 px-6">
+                      <td className="px-5 py-4">
                         <button
                           type="button"
                           onClick={() => setSelectedTraining(training)}
-                          className="flex items-center gap-3 text-left text-white"
+                          className="flex items-center gap-3 text-left text-on-surface"
                         >
-                          <div className="w-8 h-8 rounded-lg bg-surface-variant flex items-center justify-center">
-                            <Calendar className="w-4 h-4 text-primary" />
-                          </div>
+                          <Calendar className="h-4 w-4 text-primary" />
                           {formatTrainingDate(training.start_time)}
                         </button>
                       </td>
-                      <td className="py-4 px-6 text-on-surface-variant">{formatTrainingSource(training.source)}</td>
-                      <td className="py-4 px-6 text-on-surface-variant">
+                      <td className="px-5 py-4 text-on-surface-variant">{formatTrainingSource(training.source)}</td>
+                      <td className="px-5 py-4 text-on-surface-variant">
                         {formatDuration(training.start_time, training.end_time)}
                       </td>
-                      <td className="py-4 px-6">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">
+                      <td className="px-5 py-4">
+                        <span className="rounded-full border border-success/30 bg-success/10 px-2.5 py-0.5 text-xs font-medium text-success">
                           {training.overall_score ?? 0}%
                         </span>
                       </td>
-                      <td className="py-4 px-6 text-on-surface-variant">{training.stats?.total_contacts ?? 0}</td>
-                      <td className="py-4 px-6 text-on-surface-variant text-sm">
+                      <td className="px-5 py-4 text-on-surface-variant">{training.stats?.total_contacts ?? 0}</td>
+                      <td className="px-5 py-4 text-on-surface-variant">
                         {getMainIssue(training.stats?.posture_warnings_count)}
                       </td>
-                      <td className="py-4 px-6">
-                        <div className="flex justify-end gap-2">
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-1">
                           <button
                             type="button"
                             onClick={() => setSelectedTraining(training)}
-                            className="p-2 rounded-lg text-on-surface-variant hover:text-white hover:bg-surface-variant transition-colors"
-                            title="Pokaż szczegóły"
+                            className="rounded-lg p-2 text-on-surface-variant hover:bg-white/5 hover:text-on-surface"
                           >
-                            <ChevronRight className="w-5 h-5" />
+                            <ChevronRight className="h-5 w-5" />
                           </button>
                           <button
                             type="button"
                             disabled={deletingId === training.id}
                             onClick={() => void handleDelete(training.id)}
-                            className="p-2 rounded-lg text-error hover:text-white hover:bg-error/40 transition-colors disabled:opacity-50"
-                            title="Usuń trening"
+                            className="rounded-lg p-2 text-error hover:bg-error/20 disabled:opacity-50"
                           >
-                            <Trash2 className="w-5 h-5" />
+                            <Trash2 className="h-5 w-5" />
                           </button>
                         </div>
                       </td>
@@ -162,43 +149,28 @@ export default function History() {
             </div>
           </div>
 
-          <aside className="glass-card rounded-2xl p-6 border-white/10 h-fit">
-            <h3 className="text-lg font-bold text-white mb-4">Podsumowanie serii</h3>
+          <aside className="glass-card h-fit rounded-xl p-6">
+            <h2 className="font-display text-lg font-bold text-on-surface">Podsumowanie serii</h2>
             {selectedTraining ? (
-              <div className="space-y-4 text-sm">
-                <div>
-                  <p className="text-on-surface-variant">Data</p>
-                  <p className="text-white font-medium">{formatTrainingDate(selectedTraining.start_time)}</p>
-                </div>
+              <div className="mt-5 space-y-5">
+                <p className="text-sm text-on-surface-variant">{formatTrainingDate(selectedTraining.start_time)}</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-lg bg-surface-variant/40 p-3">
-                    <p className="text-on-surface-variant text-xs">Wynik</p>
-                    <p className="text-2xl font-bold text-white">{selectedTraining.overall_score ?? 0}%</p>
-                  </div>
-                  <div className="rounded-lg bg-surface-variant/40 p-3">
-                    <p className="text-on-surface-variant text-xs">Odbicia</p>
-                    <p className="text-2xl font-bold text-white">{selectedTraining.stats?.total_contacts ?? 0}</p>
-                  </div>
-                  <div className="rounded-lg bg-surface-variant/40 p-3">
-                    <p className="text-on-surface-variant text-xs">Kąt kolan</p>
-                    <p className="text-2xl font-bold text-white">{selectedTraining.stats?.avg_knee_angle ?? 0}°</p>
-                  </div>
-                  <div className="rounded-lg bg-surface-variant/40 p-3">
-                    <p className="text-on-surface-variant text-xs">Ostrzeżenia</p>
-                    <p className="text-2xl font-bold text-white">
-                      {selectedTraining.stats?.posture_warnings_count ?? 0}
-                    </p>
-                  </div>
+                  {[
+                    { label: 'Wynik', value: `${selectedTraining.overall_score ?? 0}%` },
+                    { label: 'Odbicia', value: selectedTraining.stats?.total_contacts ?? 0 },
+                    { label: 'Kąt kolan', value: `${selectedTraining.stats?.avg_knee_angle ?? 0}°` },
+                    { label: 'Ostrzeżenia', value: selectedTraining.stats?.posture_warnings_count ?? 0 },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-lg bg-surface-container-high/60 p-3">
+                      <p className="text-xs text-on-surface-variant">{item.label}</p>
+                      <p className="font-display text-2xl font-bold text-on-surface">{item.value}</p>
+                    </div>
+                  ))}
                 </div>
-                <div>
-                  <p className="text-on-surface-variant">Główny problem</p>
-                  <p className="text-white font-medium">
-                    {getMainIssue(selectedTraining.stats?.posture_warnings_count)}
-                  </p>
-                </div>
+                <ElementBars scores={selectedScores} title="Elementy techniki" />
               </div>
             ) : (
-              <p className="text-on-surface-variant">Wybierz trening z tabeli, żeby zobaczyć szczegóły.</p>
+              <p className="mt-4 text-sm text-on-surface-variant">Wybierz trening z tabeli.</p>
             )}
           </aside>
         </div>
