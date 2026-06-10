@@ -1,5 +1,13 @@
-const fallbackApiUrl = 'http://127.0.0.1:8000';
-const fallbackWsUrl = 'ws://127.0.0.1:8000';
+function resolveLanHost(): string {
+  if (typeof window === 'undefined') return '127.0.0.1';
+  const hostname = window.location.hostname;
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return '127.0.0.1';
+  return hostname;
+}
+
+const lanHost = resolveLanHost();
+const fallbackApiUrl = `http://${lanHost}:8000`;
+const fallbackWsUrl = `ws://${lanHost}:8000`;
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || fallbackApiUrl;
 export const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || fallbackWsUrl;

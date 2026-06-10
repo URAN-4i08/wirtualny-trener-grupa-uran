@@ -6,24 +6,27 @@ type Gotowosc = {
   stopa_ok: boolean;
   kolana_ok: boolean;
   platforma_ok: boolean;
+  lokcie_ok?: boolean;
   ruch_ok: boolean;
 };
 
 type ReadinessTilesProps = {
   gotowosc?: Gotowosc | null;
   postureWarnings?: string | null;
+  hasLegs?: boolean;
   compact?: boolean;
 };
 
-export default function ReadinessTiles({ gotowosc, postureWarnings, compact = false }: ReadinessTilesProps) {
-  const lokcieOk = deriveElbowOk(postureWarnings);
+export default function ReadinessTiles({ gotowosc, postureWarnings, hasLegs = true, compact = false }: ReadinessTilesProps) {
+  const lokcieOk =
+    gotowosc?.lokcie_ok !== undefined ? gotowosc.lokcie_ok : deriveElbowOk(postureWarnings);
 
   const items = [
-    { label: 'Stopy', ok: gotowosc?.stopa_ok },
-    { label: 'Kolana', ok: gotowosc?.kolana_ok },
+    { label: 'Stopy', ok: hasLegs ? gotowosc?.stopa_ok : false },
+    { label: 'Kolana', ok: hasLegs ? gotowosc?.kolana_ok : false },
     { label: 'Łokcie', ok: gotowosc ? lokcieOk : undefined },
     { label: 'Ręce', ok: gotowosc?.platforma_ok },
-    { label: 'Nogi', ok: gotowosc?.ruch_ok },
+    { label: 'W kadrze', ok: hasLegs ? gotowosc?.ruch_ok : false },
   ];
 
   if (compact) {

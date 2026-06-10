@@ -54,22 +54,33 @@ const PHRASE_RULES: { id: VoiceCommandId; phrases: string[] }[] = [
     id: 'start',
     phrases: [
       'rozpocznij analizę',
+      'rozpocznij analize',
       'włącz analizę',
+      'wlacz analize',
       'start analizy',
       'zacznij analizę',
+      'zacznij analize',
       'rozpocznij trening',
       'zacznij trening',
+      'rozpocznij',
+      'zacznij',
+      'start',
     ],
   },
   {
     id: 'stop',
     phrases: [
       'zatrzymaj analizę',
+      'zatrzymaj analize',
       'wyłącz analizę',
+      'wylacz analize',
       'stop analizy',
       'koniec analizy',
       'zatrzymaj trening',
       'zakończ trening',
+      'zatrzymaj',
+      'koniec',
+      'stop',
     ],
   },
 ];
@@ -104,10 +115,18 @@ const KEYWORD_RULES: { id: VoiceCommandId; patterns: RegExp[] }[] = [
 const FUZZY_WORDS: { id: VoiceCommandId; variants: string[]; maxDistance: number }[] = [
   { id: 'panel', variants: ['panel', 'panelu'], maxDistance: 1 },
   { id: 'rozgrzewka', variants: ['rozgrzewka', 'rozgrzewke', 'rozgrzewki'], maxDistance: 2 },
-  { id: 'analiza', variants: ['analiza', 'analize', 'analizy'], maxDistance: 1 },
-  { id: 'historia', variants: ['historia', 'historie', 'historii'], maxDistance: 1 },
-  { id: 'start', variants: ['start'], maxDistance: 1 },
-  { id: 'stop', variants: ['stop'], maxDistance: 1 },
+  { id: 'analiza', variants: ['analiza', 'analize', 'analizy'], maxDistance: 2 },
+  { id: 'historia', variants: ['historia', 'historie', 'historii'], maxDistance: 2 },
+  {
+    id: 'start',
+    variants: ['start', 'rozpocznij', 'zacznij', 'wlacz', 'wlaczyc'],
+    maxDistance: 2,
+  },
+  {
+    id: 'stop',
+    variants: ['stop', 'zatrzymaj', 'koniec', 'wylacz', 'wylaczyc'],
+    maxDistance: 2,
+  },
 ];
 
 export function normalizeTranscript(text: string): string {

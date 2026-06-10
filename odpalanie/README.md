@@ -4,6 +4,14 @@ Skrypty startowe podzielone według systemu operacyjnego. Uruchamiaj **backend**
 
 ## Windows (PowerShell)
 
+**Jedna komenda (backend + frontend):**
+
+```powershell
+.\odpalanie\windows\start-app.ps1
+```
+
+**Dwa terminale (osobno):**
+
 ```powershell
 # Terminal 1 — backend
 .\odpalanie\windows\start-backend.ps1
@@ -22,6 +30,14 @@ Przy pierwszym użyciu nadaj uprawnienia do wykonania:
 ```bash
 chmod +x odpalanie/macos/*.sh
 ```
+
+**Jedna komenda (backend + frontend):**
+
+```bash
+./odpalanie/macos/start-app.sh
+```
+
+**Dwa terminale (osobno):**
 
 ```bash
 # Terminal 1 — backend
