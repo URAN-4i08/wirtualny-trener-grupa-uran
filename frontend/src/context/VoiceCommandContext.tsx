@@ -79,11 +79,13 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
     liveHandlersRef.current = handlers;
   }, []);
 
-  const processTranscript = useCallback((transcript: string) => {
+  const processTranscript = useCallback((transcript: string, isFinal = true) => {
     const trimmed = transcript.trim();
     if (!trimmed) return;
 
     setHeardText(trimmed);
+    if (!isFinal) return;
+
     const commandId = matchVoiceCommand(trimmed);
     if (!commandId) return;
 
@@ -177,8 +179,10 @@ export function VoiceCommandProvider({ children }: { children: ReactNode }) {
           stopVoskSession();
           return;
         }
-        if (payload.type === 'partial' || payload.type === 'final') {
-          processTranscript(payload.text || '');
+        if (payload.type === 'partial') {
+          processTranscript(payload.text || '', false);
+        } else if (payload.type === 'final') {
+          processTranscript(payload.text || '', true);
         }
       } catch {
         setError('Nie udało się odczytać wyniku rozpoznawania mowy.');

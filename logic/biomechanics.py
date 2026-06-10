@@ -20,8 +20,13 @@ from typing import Optional
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Kamera frontowa
-PROG_PILKA_NADGARSTEK_PX = 180         # odległość px piłki od nadgarstka → odbicie (bardzo luźny)
-PROG_NADGARSTKI_ZLACZONE = 0.25        # znorm. odległość między nadgarstkami → "złączone" (zbalansowane)
+PROG_PILKA_NADGARSTEK_PX = 240         # odległość px piłki od nadgarstka → kontakt / odbicie
+PROG_PILKA_KONTAKT_PX = 240            # próg zapasowej detekcji odbicia (analizuj_front)
+PROG_NADGARSTKI_ZLACZONE = 0.25        # znorm. odległość między nadgarstkami → "złączone" (live)
+PROG_NADGARSTKI_SETUP = 0.30           # próg przed startem (blisko coach_engine 0.32)
+PROG_LOKCI_SETUP_MIN = 55.0
+PROG_LOKCI_SETUP_MAX = 158.0
+PROG_LOKCI_SETUP_PROSTE = 168.0        # powyżej = wyprostowane ramiona
 PROG_ODBICIE_GORNE_KAT_MIN = 70.0     # min kąt łokcia przy odbiciu górnym (poluzowano)
 PROG_ODBICIE_GORNE_KAT_MAX = 140.0    # max kąt łokcia przy odbiciu górnym (poluzowano)
 
@@ -35,6 +40,23 @@ KAT_KOLANO_ZA_NISKI = 40.0            # dopiero przy bardzo głębokim kucnięci
 ZAMACH_HISTORIA_KLATEK = 12           # długość bufora historii Y nadgarstka
 ZAMACH_DELTA_Y_PROG = 0.04            # min zmiana Y (znorm.) uznana za gwałtowny ruch
 ZAMACH_MIN_KLATEK = 4                 # ile klatek ruchu potrzeba do rejestracji zamachu
+
+# Widoczność nóg w kadrze
+MIN_NOGI_VISIBILITY = 0.32
+MAX_NOGI_Y = 0.99
+
+# Stopy — rozstaw względem bioder (szeroki zakres jak wcześniej przy barkach)
+ROZSTAW_STOP_MIN = 0.65
+ROZSTAW_STOP_MAX = 1.55
+
+# Kolana — pozycja gotowości przed próbą (węższy zakres niż live)
+KAT_KOLANO_GOTOWOSC_MIN = 95.0
+KAT_KOLANO_GOTOWOSC_MAX = 175.0
+KAT_KOLANO_SETUP_MIN = 95.0
+KAT_KOLANO_SETUP_MAX = 165.0
+KAT_KOLANO_SETUP_PROSTE = 172.0        # powyżej na wszystkich odczytach = stoisz prosto
+
+KOMUNIKAT_BRAK_NOG = "Nie widać nóg — ustaw się tak, by stopy były w kadrze"
 
 # Fuzja — wagi oceny (suma = 100)
 WAGA_KONTAKT_POTWIERDZONY = 40        # obie kamery potwierdziły kontakt
@@ -65,6 +87,22 @@ def _odleglosc_px(cx: int, cy: int, lm, frame_shape: tuple) -> float:
     lm_x = int(lm.x * w)
     lm_y = int(lm.y * h)
     return math.hypot(cx - lm_x, cy - lm_y)
+
+
+def nogi_widoczne(punkty: dict) -> bool:
+    """Czy kolana i kostki są widoczne w kadrze (wystarczająca pewność + nie ucięte na dole)."""
+    if not punkty:
+        return False
+
+    for key in ("lewe_kolano", "prawe_kolano", "lewa_kostka", "prawa_kostka"):
+        lm = punkty.get(key)
+        if lm is None:
+            return False
+        if getattr(lm, "visibility", 0.0) < MIN_NOGI_VISIBILITY:
+            return False
+        if lm.y > MAX_NOGI_Y:
+            return False
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +138,7 @@ def analizuj_front(punkty: dict, pilka: list, frame_shape: tuple) -> dict:
         "kat_lokcia_l": None,
         "kat_lokcia_p": None,
         "symetria_rece": None,
-        "pilka_wykryta": bool(pilka),
+        "pilka_wykryta": False,
     }
 
     if not punkty:
@@ -151,6 +189,7 @@ def analizuj_front(punkty: dict, pilka: list, frame_shape: tuple) -> dict:
             min_dist_cy = cy
 
     wynik["dystans_pilka_px"] = round(min_dist, 1) if min_dist is not None else None
+    wynik["pilka_wykryta"] = min_dist is not None and min_dist < PROG_PILKA_NADGARSTEK_PX
 
     # ── Detekcja ODBICIA DOLNEGO ─────────────────────────────────────────
     # Warunek: piłka blisko nadgarstków (złączone = bonus, nie wymag.)
@@ -193,35 +232,38 @@ def analizuj_front(punkty: dict, pilka: list, frame_shape: tuple) -> dict:
 def analizuj_stopy(punkty: dict) -> dict:
     wynik = {
         'rozstawienie_stop': None,
-        'rozstawienie_ok': True,
-        'balans': 'OK',
-        'komunikat_stop': 'Oczekuję na stopy w kadrze'
+        'rozstawienie_ok': False,
+        'balans': 'BRAK',
+        'nogi_widoczne': False,
+        'komunikat_stop': KOMUNIKAT_BRAK_NOG,
     }
     if not punkty:
         return wynik
+
+    wynik['nogi_widoczne'] = nogi_widoczne(punkty)
+    if not wynik['nogi_widoczne']:
+        return wynik
+
+    wynik['komunikat_stop'] = None
     try:
         l_kostka = punkty['lewa_kostka']
         p_kostka = punkty['prawa_kostka']
-        l_ramie = punkty['lewe_ramie']
-        p_ramie = punkty['prawe_ramie']
         l_biodro = punkty['lewe_biodro']
         p_biodro = punkty['prawe_biodro']
     except KeyError:
         return wynik
         
     dystans_kostek = abs(l_kostka.x - p_kostka.x)
-    szerokosc_barkow = max(0.08, abs(l_ramie.x - p_ramie.x))
+    szerokosc_bioder = max(0.08, abs(l_biodro.x - p_biodro.x))
     
-    rozstawienie = dystans_kostek / szerokosc_barkow
-    wynik['rozstawienie_stop'] = rozstawienie
-    # Znacznie poluzowane zasady dla stóp
-    wynik['rozstawienie_ok'] = 0.6 <= rozstawienie <= 1.6
+    rozstawienie = dystans_kostek / szerokosc_bioder
+    wynik['rozstawienie_stop'] = round(rozstawienie, 2)
+    wynik['rozstawienie_ok'] = ROZSTAW_STOP_MIN <= rozstawienie <= ROZSTAW_STOP_MAX
     
     srodek_stop = (l_kostka.x + p_kostka.x) / 2
     srodek_bioder = (l_biodro.x + p_biodro.x) / 2
     
     balans_diff = srodek_bioder - srodek_stop
-    # Poluzowane zasady dla balansu ciężaru
     if balans_diff > 0.25:
         wynik['balans'] = 'ZA_LEWO'
     elif balans_diff < -0.25:
@@ -232,12 +274,154 @@ def analizuj_stopy(punkty: dict) -> dict:
     return wynik
 
 
+def _katy_kolan_setup(
+    dane_bok: dict,
+    kat_kolana_front: float | None,
+    punkty: dict | None,
+) -> list[float]:
+    """Zbiera wszystkie dostępne odczyty kąta kolana (front + bok + per-noga)."""
+    katy: list[float] = []
+    kat_bok = dane_bok.get("kat_kolana") if dane_bok else None
+    if kat_bok is not None:
+        katy.append(float(kat_bok))
+    if kat_kolana_front is not None:
+        katy.append(float(kat_kolana_front))
+    if punkty:
+        for hip_k, kol_k, kost_k in (
+            ("lewe_biodro", "lewe_kolano", "lewa_kostka"),
+            ("prawe_biodro", "prawe_kolano", "prawa_kostka"),
+        ):
+            try:
+                katy.append(_kat(punkty[hip_k], punkty[kol_k], punkty[kost_k]))
+            except KeyError:
+                pass
+    return katy
+
+
+def _kolana_setup_ok(
+    dane_bok: dict,
+    kat_kolana_front: float | None,
+    punkty: dict | None,
+) -> bool:
+    """
+    Kolana w pozycji gotowości — łączy kamerę boczną i frontową.
+    Kamera frontowa z perspektywy zaniża ugięcie, więc używamy min(kątów)
+    i heurystyki głębokości (kolana niżej niż biodra w kadrze).
+    """
+    katy = _katy_kolan_setup(dane_bok, kat_kolana_front, punkty)
+    if not katy:
+        return False
+
+    min_kat = min(katy)
+    if min_kat > KAT_KOLANO_SETUP_PROSTE:
+        return False
+
+    if any(KAT_KOLANO_SETUP_MIN <= k <= KAT_KOLANO_SETUP_MAX for k in katy):
+        return True
+
+    # Front / ukośny kadr: kolana wyraźnie poniżej bioder = ugięcie mimo wysokiego kąta
+    if punkty and min_kat <= KAT_KOLANO_SETUP_PROSTE:
+        try:
+            hip_y = (punkty["lewe_biodro"].y + punkty["prawe_biodro"].y) / 2
+            knee_y = (punkty["lewe_kolano"].y + punkty["prawe_kolano"].y) / 2
+            if knee_y > hip_y + 0.035:
+                return True
+        except KeyError:
+            pass
+
+    return False
+
+
+def _lokcie_ok(kat_l: float | None, kat_p: float | None) -> bool:
+    if kat_l is None or kat_p is None:
+        return False
+    if kat_l > PROG_LOKCI_SETUP_PROSTE and kat_p > PROG_LOKCI_SETUP_PROSTE:
+        return False
+    if kat_l < 45 or kat_p < 45:
+        return False
+    strict = (
+        PROG_LOKCI_SETUP_MIN <= kat_l <= PROG_LOKCI_SETUP_MAX
+        and PROG_LOKCI_SETUP_MIN <= kat_p <= PROG_LOKCI_SETUP_MAX
+    )
+    relaxed = kat_l <= 165 and kat_p <= 165
+    return strict or relaxed
+
+
+def _platforma_setup(dane_front: dict, punkty: dict | None) -> bool:
+    """Złączone dłonie na platformie przed ciałem — bez duplikowania testu łokci."""
+    if not dane_front or not punkty:
+        return False
+    try:
+        l_w = punkty["lewy_nadgarstek"]
+        p_w = punkty["prawy_nadgarstek"]
+        l_hip = punkty["lewe_biodro"]
+        p_hip = punkty["prawe_biodro"]
+        l_sh = punkty["lewe_ramie"]
+        p_sh = punkty["prawe_ramie"]
+    except (KeyError, TypeError):
+        return False
+
+    odl_nadgarstkow = math.dist((l_w.x, l_w.y), (p_w.x, p_w.y))
+    zlaczone = odl_nadgarstkow < PROG_NADGARSTKI_SETUP or bool(
+        dane_front.get("nadgarstki_zlaczone")
+    )
+    if not zlaczone:
+        return False
+
+    avg_wrist_y = (l_w.y + p_w.y) / 2
+    avg_hip_y = (l_hip.y + p_hip.y) / 2
+    avg_shoulder_y = (l_sh.y + p_sh.y) / 2
+    # platforma dolna: dłonie przed ciałem, między barkami a biodrami (Y rośnie w dół)
+    height_ok = (avg_shoulder_y - 0.08) < avg_wrist_y < (avg_hip_y + 0.10)
+
+    srodek_barkow = (l_sh.x + p_sh.x) / 2
+    srodek_nadgarstkow = (l_w.x + p_w.x) / 2
+    centered_ok = abs(srodek_nadgarstkow - srodek_barkow) <= 0.28
+
+    return height_ok and centered_ok
+
+
+def _gotowosc_setup(
+    dane_front: dict,
+    dane_bok: dict,
+    dane_stopy: dict,
+    kat_kolana_front: float | None,
+    punkty: dict | None = None,
+) -> dict:
+    """Surowa checklist przed startem próby — bez domyślnego „OK”."""
+    nogi_front = bool(dane_stopy.get("nogi_widoczne"))
+
+    stopa_ok = (
+        nogi_front
+        and bool(dane_stopy.get("rozstawienie_ok"))
+        and dane_stopy.get("balans") == "OK"
+    )
+
+    kolana_ok = _kolana_setup_ok(dane_bok, kat_kolana_front, punkty)
+
+    platforma_ok = _platforma_setup(dane_front, punkty)
+    lokcie_ok = _lokcie_ok(
+        dane_front.get("kat_lokcia_l") if dane_front else None,
+        dane_front.get("kat_lokcia_p") if dane_front else None,
+    )
+
+    return {
+        "stopa_ok": stopa_ok,
+        "kolana_ok": kolana_ok,
+        "platforma_ok": platforma_ok,
+        "lokcie_ok": lokcie_ok,
+        "ruch_ok": nogi_front,
+    }
+
+
 def analizuj_faze(
     dane_front: dict,
     dane_bok: dict,
     dystans_pilka: float | None,
     kat_kolana_front: float | None = None,
     ostatnie_odbicie: dict | None = None,
+    tryb_setup: bool = False,
+    punkty: dict | None = None,
 ) -> dict:
     """
     Analiza fazy ruchu z obsługą pamięci ostatniego odbicia.
@@ -254,7 +438,35 @@ def analizuj_faze(
     """
     import time as _time
 
-    FOLLOW_THROUGH_SEC = 3.0  # jak długo pokazywać podsumowanie po odbiciu
+    FOLLOW_THROUGH_SEC = 3.0
+
+    dane_stopy = dane_front.get('dane_stopy', {}) if dane_front else {}
+
+    if tryb_setup:
+        gotowosc = _gotowosc_setup(
+            dane_front, dane_bok, dane_stopy, kat_kolana_front, punkty=punkty,
+        )
+        if not gotowosc["ruch_ok"]:
+            feedback = 'Ustaw się tak, by widać było stopy w kadrze frontowej kamery'
+        elif not gotowosc["lokcie_ok"]:
+            feedback = 'Ustaw łokcie — przedramiona przed ciałem, kąt ok. 90°'
+        elif not gotowosc["platforma_ok"]:
+            feedback = 'Złącz dłonie — platforma przed ciałem'
+        elif not gotowosc["kolana_ok"]:
+            feedback = 'Ugnij kolana — pozycja gotowości siatkarskiej'
+        elif not gotowosc["stopa_ok"]:
+            feedback = 'Popraw rozstaw stóp (na szerokość bioder)'
+        elif all(gotowosc.values()):
+            feedback = 'Świetna pozycja wyjściowa! ✓'
+        else:
+            feedback = 'Przyjmij swobodną pozycję gotowości'
+        return {
+            'faza': 'OCZEKIWANIE',
+            'gotowosc': gotowosc,
+            'feedback_fazy': feedback,
+        }
+
+    nogi_w_kadrze = bool(dane_stopy.get('nogi_widoczne')) or bool(dane_bok.get('nogi_widoczne'))
 
     # ── Określ fazę ruchu ────────────────────────────────────────────────────
     faza = 'OCZEKIWANIE'
@@ -269,24 +481,35 @@ def analizuj_faze(
             faza = 'PRZYGOTOWANIE'
 
     # ── Checklist gotowości ──────────────────────────────────────────────────
-    stopa_ok = dane_front.get('dane_stopy', {}).get('rozstawienie_ok', True) if dane_front else True
-
-    # Kolana: używaj kamery bocznej → frontu → domyślnie OK
     kat_kolana = dane_bok.get('kat_kolana')
+    stopa_ok = bool(dane_stopy.get('nogi_widoczne')) and bool(dane_stopy.get('rozstawienie_ok'))
+    if not dane_stopy.get('nogi_widoczne') and nogi_w_kadrze:
+        stopa_ok = False
+
     if kat_kolana is not None:
         kolana_ok = KAT_KOLANO_PRAWIDLOWY_MIN <= kat_kolana <= KAT_KOLANO_PRAWIDLOWY_MAX
     elif kat_kolana_front is not None:
-        kolana_ok = kat_kolana_front < 174.0  # przychylne — prawie każde ugięcie OK
+        kolana_ok = KAT_KOLANO_GOTOWOSC_MIN <= kat_kolana_front <= KAT_KOLANO_GOTOWOSC_MAX
     else:
-        kolana_ok = True  # brak danych = nie karamy
+        kolana_ok = False
 
-    platforma_ok = dane_front.get('nadgarstki_zlaczone', False) if dane_front else False
-    ruch_ok = dane_bok.get('zamach_wykryty', False) if faza == 'KONTAKT' else True
+    lokcie_ok = _lokcie_ok(
+        dane_front.get("kat_lokcia_l") if dane_front else None,
+        dane_front.get("kat_lokcia_p") if dane_front else None,
+    )
+    platforma_ok = bool(dane_front.get("nadgarstki_zlaczone", False)) if dane_front else False
+    if not platforma_ok and dane_front and lokcie_ok:
+        platforma_ok = True
+    if faza == 'KONTAKT':
+        ruch_ok = bool(dane_bok.get('zamach_wykryty', False))
+    else:
+        ruch_ok = bool(dane_stopy.get('nogi_widoczne')) or nogi_w_kadrze
 
     gotowosc = {
         'stopa_ok': stopa_ok,
         'kolana_ok': kolana_ok,
         'platforma_ok': platforma_ok,
+        'lokcie_ok': lokcie_ok,
         'ruch_ok': ruch_ok,
     }
 
@@ -495,16 +718,16 @@ def analizuj_bok(punkty: dict, wrist_tracker: Optional["WristTrajectoryTracker"]
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _gradient_kolana(kat: float) -> int:
-    """Gradientowa ocena kąta kolanowego: 0–25 pkt (bardzo wybaczająca)."""
+    """Gradientowa ocena kąta kolanowego: 0–25 pkt."""
     if kat is None:
-        return 12  # nawet bez danych — częściowe punkty
-    if 90.0 <= kat <= 155.0:
-        return 25  # szeroki optymalny zakres = pełne punkty
-    if kat < 50.0 or kat > 178.0:
-        return 5   # nawet ekstremalny kąt → trochę punktów
-    if kat < 90.0:
-        return int(5 + 20 * (kat - 50.0) / 40.0)   # gradient 50→90 (5→25)
-    return int(5 + 20 * (178.0 - kat) / 23.0)       # gradient 155→178 (25→5)
+        return 0
+    if 110.0 <= kat <= 145.0:
+        return 25
+    if kat < 90.0 or kat > 170.0:
+        return 3
+    if kat < 110.0:
+        return int(3 + 22 * (kat - 90.0) / 20.0)
+    return int(3 + 22 * (170.0 - kat) / 25.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -564,29 +787,23 @@ def fuzja_sensorow(dane_front: dict, dane_bok: dict) -> dict:
         if kolana_proste:
             wynik["brak_pracy_nog"] = True
             wynik["komunikat_fuzji"] = "Odbicie OK! Spróbuj bardziej zaangażować nogi."
-            wynik["ocena_fuzji"] = 55  # wciąż pozytywna ocena
+            wynik["ocena_fuzji"] = 42
             return wynik
 
-        # Normalne odbicie — sumuj punkty (bazowe 10 pkt na start)
-        punkty = 10
-
-        # +40 pkt: obie kamery potwierdziły kontakt (front + bok widzi ugięte kolana)
-        punkty += WAGA_KONTAKT_POTWIERDZONY
-
-        # +5-25 pkt: gradient kąta kolanowego (bardzo łagodny)
+        punkty = 0
+        if kontakt_front:
+            punkty += WAGA_KONTAKT_POTWIERDZONY
         punkty += _gradient_kolana(kat_kolana)
 
-        # +20 pkt: złączone nadgarstki (platforma dolna)
         if nadgarstki_zlaczone:
             punkty += WAGA_NADGARSTKI_ZLACZONE
-        else:
-            punkty += 8  # częściowe punkty nawet bez idealnej platformy
+        elif dane_front.get("kat_lokcia_l") is not None:
+            punkty += 4
 
-        # +5-15 pkt: praca nóg (częściowe punkty nawet bez pełnego zamachu)
         if zamach_wykryty:
             punkty += WAGA_ZAMACH_WYKRYTY
-        else:
-            punkty += 8  # więcej częściowych punktów za pozycję
+        elif not kolana_proste:
+            punkty += 4
 
         wynik["ocena_fuzji"] = min(100, punkty)
 
