@@ -43,17 +43,18 @@ def build_bounce_record(
     if bio_bok and not bio_bok.get("zamach_wykryty", False):
         problemy.append("praca nóg")
 
+    # Łagodniejsza ocena — użytkownik dopiero się uczy i często się obraca.
     if not problemy:
-        score = 72
+        score = 82
         fb = f"Poprawne odbicie {typ}! ✓"
     elif len(problemy) == 1:
-        score = 52
-        fb = f"Odbicie {typ} — popraw: {problemy[0]}"
+        score = 66
+        fb = f"Dobre odbicie {typ} — drobna wskazówka: {problemy[0]}"
     elif len(problemy) == 2:
-        score = 38
+        score = 54
         fb = f"Odbicie {typ} — popraw: {', '.join(problemy)}"
     else:
-        score = 25
+        score = 44
         fb = f"Odbicie {typ} — popraw: {', '.join(problemy[:2])}…"
 
     # fusion_score bywa zawyżony (Dual-Cam) — tylko lekka korekta w dół
