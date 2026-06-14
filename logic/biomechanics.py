@@ -50,11 +50,11 @@ ROZSTAW_STOP_MIN = 0.65
 ROZSTAW_STOP_MAX = 1.55
 
 # Kolana — pozycja gotowości przed próbą (węższy zakres niż live)
-KAT_KOLANO_GOTOWOSC_MIN = 95.0
-KAT_KOLANO_GOTOWOSC_MAX = 175.0
-KAT_KOLANO_SETUP_MIN = 95.0
-KAT_KOLANO_SETUP_MAX = 165.0
-KAT_KOLANO_SETUP_PROSTE = 172.0        # powyżej na wszystkich odczytach = stoisz prosto
+KAT_KOLANO_GOTOWOSC_MIN = 88.0
+KAT_KOLANO_GOTOWOSC_MAX = 178.0
+KAT_KOLANO_SETUP_MIN = 88.0
+KAT_KOLANO_SETUP_MAX = 173.0
+KAT_KOLANO_SETUP_PROSTE = 177.0        # powyżej na wszystkich odczytach = stoisz zupełnie prosto
 
 KOMUNIKAT_BRAK_NOG = "Nie widać nóg — ustaw się tak, by stopy były w kadrze"
 
@@ -343,7 +343,7 @@ def _lokcie_ok(kat_l: float | None, kat_p: float | None) -> bool:
         PROG_LOKCI_SETUP_MIN <= kat_l <= PROG_LOKCI_SETUP_MAX
         and PROG_LOKCI_SETUP_MIN <= kat_p <= PROG_LOKCI_SETUP_MAX
     )
-    relaxed = kat_l <= 165 and kat_p <= 165
+    relaxed = kat_l <= 168 and kat_p <= 168
     return strict or relaxed
 
 
@@ -371,12 +371,12 @@ def _platforma_setup(dane_front: dict, punkty: dict | None) -> bool:
     avg_wrist_y = (l_w.y + p_w.y) / 2
     avg_hip_y = (l_hip.y + p_hip.y) / 2
     avg_shoulder_y = (l_sh.y + p_sh.y) / 2
-    # platforma dolna: dłonie przed ciałem, między barkami a biodrami (Y rośnie w dół)
-    height_ok = (avg_shoulder_y - 0.08) < avg_wrist_y < (avg_hip_y + 0.10)
+    # platforma dolna: dłonie przed ciałem — szeroki, wybaczający zakres wysokości
+    height_ok = (avg_shoulder_y - 0.18) < avg_wrist_y < (avg_hip_y + 0.22)
 
     srodek_barkow = (l_sh.x + p_sh.x) / 2
     srodek_nadgarstkow = (l_w.x + p_w.x) / 2
-    centered_ok = abs(srodek_nadgarstkow - srodek_barkow) <= 0.28
+    centered_ok = abs(srodek_nadgarstkow - srodek_barkow) <= 0.42
 
     return height_ok and centered_ok
 
@@ -391,11 +391,9 @@ def _gotowosc_setup(
     """Surowa checklist przed startem próby — bez domyślnego „OK”."""
     nogi_front = bool(dane_stopy.get("nogi_widoczne"))
 
-    stopa_ok = (
-        nogi_front
-        and bool(dane_stopy.get("rozstawienie_ok"))
-        and dane_stopy.get("balans") == "OK"
-    )
+    # Łagodnie: wystarczy że stopy są w kadrze i z grubsza rozstawione —
+    # nie wymagamy idealnego balansu (początkujący przestępuje z nogi na nogę).
+    stopa_ok = nogi_front and bool(dane_stopy.get("rozstawienie_ok"))
 
     kolana_ok = _kolana_setup_ok(dane_bok, kat_kolana_front, punkty)
 
@@ -414,6 +412,109 @@ def _gotowosc_setup(
     }
 
 
+def _gotowosc_setup_prosta(
+    punkty: dict | None,
+    kat_kolana_front: float | None,
+    camera_mode: str = "front",
+) -> dict:
+    """
+    Checklist dla POJEDYNCZEJ kamery — te same 5 segmentów co w Dual-Cam, ale
+    liczone wprost z punktów jednej kamery i DOPASOWANE do widoku:
+
+      • front — widać rozstaw stóp, złączone dłonie, kąt łokci z przodu,
+      • bok   — rozstawu/złączenia nie widać, więc liczymy ułożenie rąk z przodu
+                i (dokładny z boku) kąt kolan.
+
+    Progi są tak dobrane, by NIE zapaliły się od samego stania — trzeba realnie
+    przyjąć pozycję gotowości (ugięte kolana, ręce złączone i wysunięte przed siebie).
+    """
+    puste = {
+        "stopa_ok": False,
+        "kolana_ok": False,
+        "platforma_ok": False,
+        "lokcie_ok": False,
+        "ruch_ok": False,
+    }
+    if not punkty:
+        return puste
+
+    bok = camera_mode == "side"
+
+    # ── Łokcie — przedramiona ułożone, nie zwisają prosto wzdłuż ciała ──────────
+    lokcie_ok = False
+    try:
+        kl = _kat(punkty["lewe_ramie"], punkty["lewy_lokiec"], punkty["lewy_nadgarstek"])
+        kp = _kat(punkty["prawe_ramie"], punkty["prawy_lokiec"], punkty["prawy_nadgarstek"])
+        # 40–168°: odrzuca i ostro złożone ręce, i całkiem wyprostowane wzdłuż ciała
+        lokcie_ok = 40.0 <= kl <= 168.0 and 40.0 <= kp <= 168.0
+    except (KeyError, TypeError):
+        pass
+
+    # ── Ręce / platforma ───────────────────────────────────────────────────────
+    platforma_ok = False
+    try:
+        lw = punkty["lewy_nadgarstek"]
+        pw = punkty["prawy_nadgarstek"]
+        ls = punkty["lewe_ramie"]
+        ps = punkty["prawe_ramie"]
+        lh = punkty["lewe_biodro"]
+        ph = punkty["prawe_biodro"]
+        avg_wrist_y = (lw.y + pw.y) / 2
+        avg_shoulder_y = (ls.y + ps.y) / 2
+        avg_hip_y = (lh.y + ph.y) / 2
+        wysokosc_ok = (avg_shoulder_y - 0.05) < avg_wrist_y < (avg_hip_y + 0.10)
+        if bok:
+            # Z boku nadgarstki się nakładają — wymagamy RĄK WYSUNIĘTYCH PRZED SIEBIE.
+            avg_wrist_x = (lw.x + pw.x) / 2
+            avg_shoulder_x = (ls.x + ps.x) / 2
+            rece_przed_soba = abs(avg_wrist_x - avg_shoulder_x) >= 0.07
+            platforma_ok = rece_przed_soba and wysokosc_ok
+        else:
+            # Z przodu — dłonie wyraźnie złączone i na właściwej wysokości.
+            zlaczone = math.dist((lw.x, lw.y), (pw.x, pw.y)) < 0.18
+            platforma_ok = zlaczone and wysokosc_ok
+    except (KeyError, TypeError):
+        pass
+
+    # ── Kolana — realne ugięcie (bez sztuczki „kolana niżej bioder") ────────────
+    kolana_ok = kat_kolana_front is not None and 80.0 <= kat_kolana_front <= 168.0
+
+    # ── Stopy ───────────────────────────────────────────────────────────────────
+    stopa_ok = False
+    if nogi_widoczne(punkty):
+        if bok:
+            # Z boku nie ocenimy rozstawu — wystarczy, że stopy są w kadrze.
+            stopa_ok = True
+        else:
+            try:
+                la = punkty["lewa_kostka"]
+                pa = punkty["prawa_kostka"]
+                lh = punkty["lewe_biodro"]
+                ph = punkty["prawe_biodro"]
+                rozstaw_bioder = abs(lh.x - ph.x)
+                if rozstaw_bioder >= 0.04:
+                    ratio = abs(la.x - pa.x) / rozstaw_bioder
+                    stopa_ok = 0.85 <= ratio <= 2.40  # realnie rozstawione (≈ szer. bioder)
+            except (KeyError, TypeError, ZeroDivisionError):
+                pass
+
+    # ── „W kadrze" — cała sylwetka widoczna (głowa + nogi) ──────────────────────
+    w_kadrze = False
+    try:
+        nos_vis = getattr(punkty["nos"], "visibility", 1.0)
+        w_kadrze = nos_vis >= 0.4 and nogi_widoczne(punkty)
+    except (KeyError, TypeError):
+        w_kadrze = nogi_widoczne(punkty)
+
+    return {
+        "stopa_ok": stopa_ok,
+        "kolana_ok": kolana_ok,
+        "platforma_ok": platforma_ok,
+        "lokcie_ok": lokcie_ok,
+        "ruch_ok": w_kadrze,
+    }
+
+
 def analizuj_faze(
     dane_front: dict,
     dane_bok: dict,
@@ -422,6 +523,7 @@ def analizuj_faze(
     ostatnie_odbicie: dict | None = None,
     tryb_setup: bool = False,
     punkty: dict | None = None,
+    camera_mode: str = "front",
 ) -> dict:
     """
     Analiza fazy ruchu z obsługą pamięci ostatniego odbicia.
@@ -443,9 +545,14 @@ def analizuj_faze(
     dane_stopy = dane_front.get('dane_stopy', {}) if dane_front else {}
 
     if tryb_setup:
-        gotowosc = _gotowosc_setup(
-            dane_front, dane_bok, dane_stopy, kat_kolana_front, punkty=punkty,
-        )
+        # Dual-Cam: pełna checklist z fuzją dwóch kamer.
+        # Pojedyncza kamera: uproszczona, łatwa checklist z tych samych 5 segmentów.
+        if camera_mode == "dual":
+            gotowosc = _gotowosc_setup(
+                dane_front, dane_bok, dane_stopy, kat_kolana_front, punkty=punkty,
+            )
+        else:
+            gotowosc = _gotowosc_setup_prosta(punkty, kat_kolana_front, camera_mode=camera_mode)
         if not gotowosc["ruch_ok"]:
             feedback = 'Ustaw się tak, by widać było stopy w kadrze frontowej kamery'
         elif not gotowosc["lokcie_ok"]:

@@ -48,7 +48,7 @@ export default function SessionSetupOverlay({
         <p className="mt-2 text-sm text-on-surface-variant">
           {almostReady
             ? 'Świetnie! Odliczanie zaraz wystartuje...'
-            : 'Wszystkie segmenty poniżej muszą być zielone — wtedy zacznie się odliczanie 3 s.'}
+            : 'Ustaw się w miarę wygodnie — gdy większość segmentów zrobi się zielona, ruszamy.'}
         </p>
         <p className="mt-3 font-display text-3xl font-bold text-primary-container">
           {readyCount}/5

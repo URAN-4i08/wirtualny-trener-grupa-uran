@@ -137,9 +137,12 @@ export default function LiveAnalysis() {
   const [cameraMode, setCameraMode] = useState<'front' | 'side' | 'dual'>('front');
   const [dualCamIndices, setDualCamIndices] = useState({ front: 0, side: 1 });
   const [availableCameras, setAvailableCameras] = useState<number[]>([0]);
+  const [cameraDevices, setCameraDevices] = useState<{ index: number; name: string }[]>([]);
   const [isSwappingCameras, setIsSwappingCameras] = useState(false);
   const [sessionSeconds, setSessionSeconds] = useState(0);
+  const [trialDuration, setTrialDuration] = useState(30);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const trialDurationRef = useRef(trialDuration);
   const lastTickSecondRef = useRef<number | null>(null);
   const lastSessionPhaseRef = useRef<string>('idle');
   const isAnalyzingRef = useRef(isAnalyzing);
@@ -154,6 +157,9 @@ export default function LiveAnalysis() {
       const response = await fetch(apiUrl(`/api/cameras${force ? '?refresh=1' : ''}`));
       const data = await response.json();
       const cameras: number[] = Array.isArray(data.cameras) ? data.cameras : [];
+      if (Array.isArray(data.devices)) {
+        setCameraDevices(data.devices);
+      }
       if (cameras.length > 0) {
         setAvailableCameras(cameras);
       }
@@ -306,6 +312,10 @@ export default function LiveAnalysis() {
   }, [canStartTrial]);
 
   useEffect(() => {
+    trialDurationRef.current = trialDuration;
+  }, [trialDuration]);
+
+  useEffect(() => {
     const phase = metrics.sessionStatus ?? 'idle';
     const sec = metrics.sessionSecondsRemaining ?? 0;
 
@@ -338,7 +348,8 @@ export default function LiveAnalysis() {
 
   async function beginTimedSession() {
     if (metrics.source !== 'camera') return;
-    await fetch(apiUrl('/api/session/start'), { method: 'POST' }).catch(() => undefined);
+    const duration = trialDurationRef.current;
+    await fetch(apiUrl(`/api/session/start?duration=${duration}`), { method: 'POST' }).catch(() => undefined);
   }
 
   const openCameraStream = useCallback(
@@ -565,10 +576,34 @@ export default function LiveAnalysis() {
     { name: 'Brak', value: 100 - score, color: '#352720' },
   ];
 
-  const sideCameraIndex = availableCameras.length >= 2 ? availableCameras[1] : availableCameras[0] ?? 0;
+  // Przypisanie kamer: Front = wbudowana kamera laptopa, Bok = iPhone (telefon).
+  // Gdy znamy nazwy urządzeń — dobieramy po nazwie. Gdy nazw brak (np. bez ffmpeg),
+  // używamy odwróconej kolejności indeksów, bo na tym Macu iPhone dostaje indeks 0.
+  const { frontCameraIndex, sideCameraIndex } = (() => {
+    const isLaptop = (n: string) => /facetime|built-?in|macbook|isight|wbudowan|laptop/i.test(n);
+    const isPhone = (n: string) => /iphone|continuity|ios|aparat|kamera \(/i.test(n);
+    const laptopDev = cameraDevices.find((d) => isLaptop(d.name));
+    const phoneDev = cameraDevices.find((d) => isPhone(d.name));
+
+    if (laptopDev && phoneDev) {
+      return { frontCameraIndex: laptopDev.index, sideCameraIndex: phoneDev.index };
+    }
+    if (laptopDev) {
+      const side = availableCameras.find((i) => i !== laptopDev.index) ?? laptopDev.index;
+      return { frontCameraIndex: laptopDev.index, sideCameraIndex: side };
+    }
+    if (phoneDev) {
+      const front = availableCameras.find((i) => i !== phoneDev.index) ?? phoneDev.index;
+      return { frontCameraIndex: front, sideCameraIndex: phoneDev.index };
+    }
+    // Brak nazw — laptop zwykle ma wyższy indeks (iPhone wskakuje jako 0).
+    const front = availableCameras[1] ?? availableCameras[0] ?? 0;
+    const side = availableCameras[0] ?? 0;
+    return { frontCameraIndex: front, sideCameraIndex: side };
+  })();
 
   const sourceButtons = [
-    { id: 'front', label: 'Kamera front', action: () => void selectCamera(availableCameras[0] ?? 0, 'front'), active: metrics.source === 'camera' && cameraMode === 'front' },
+    { id: 'front', label: 'Kamera front', action: () => void selectCamera(frontCameraIndex, 'front'), active: metrics.source === 'camera' && cameraMode === 'front' },
     { id: 'side', label: 'Kamera bok', action: () => void selectCamera(sideCameraIndex, 'side'), active: metrics.source === 'camera' && cameraMode === 'side' },
     { id: 'dual', label: 'Dual-Cam', action: () => void selectDualCamera(), active: metrics.source === 'camera' && cameraMode === 'dual' },
     { id: 'file', label: 'Plik', action: () => fileInputRef.current?.click(), active: metrics.source === 'file' },
@@ -646,6 +681,25 @@ export default function LiveAnalysis() {
               </button>
             ))}
           </div>
+          {metrics.source === 'camera' && (
+            <label className="hidden items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-2.5 py-2 text-xs font-semibold text-on-surface-variant sm:flex">
+              <Clock className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Czas próby</span>
+              <select
+                value={trialDuration}
+                onChange={(e) => setTrialDuration(Number(e.target.value))}
+                disabled={inTimedTrial}
+                title="Wybierz długość próby"
+                className="cursor-pointer rounded-md bg-transparent text-on-surface outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {[10, 20, 30, 45, 60, 90].map((sec) => (
+                  <option key={sec} value={sec} className="bg-surface-container text-on-surface">
+                    {sec} s
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -799,7 +853,7 @@ export default function LiveAnalysis() {
                 {sessionStatus === 'idle' && (
                   <div className="absolute bottom-4 left-4 rounded-xl glass-panel px-4 py-3">
                     <p className="text-xs text-on-surface-variant">
-                      Analiza na bieżąco — kliknij <strong>Rozpocznij</strong> na 10-sekundową próbę
+                      Analiza na bieżąco — kliknij <strong>Rozpocznij</strong> na {trialDuration}-sekundową próbę
                     </p>
                   </div>
                 )}

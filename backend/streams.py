@@ -72,7 +72,8 @@ mp_pose = mp.solutions.pose
 
 
 def _contact_cooldown_frames() -> int:
-    return max(2, int(LIVE_STREAM_FPS * 0.10))
+    # ~0.4 s — dłużej niż połowa cyklu odbicia, żeby jedno odbicie nie liczyło się dwa razy.
+    return max(8, int(LIVE_STREAM_FPS * 0.4))
 
 
 def _register_bounce_on_contact(
@@ -512,6 +513,7 @@ def stream_camera_frames(capture_source, current_source):
             ostatnie_odbicie=ostatnie_odbicie,
             tryb_setup=in_setup,
             punkty=metrics.get("_bodyPoints") or None,
+            camera_mode=camera_mode,
         )
 
         now = time.time()
@@ -559,6 +561,7 @@ def stream_camera_frames(capture_source, current_source):
             has_pose=bool(metrics.get('hasPose')),
             has_legs=bool(metrics.get('hasLegs')),
             posture_warnings=published_metrics.get('postureWarnings'),
+            camera_mode=camera_mode,
         )
 
         published_metrics.pop("_bodyPoints", None)
@@ -955,7 +958,10 @@ def stream_dual_camera_frames(current_source):
 
         dane_front_merged = {**dane_front, 'dane_stopy': dane_stopy}
         dystans = dane_front.get('dystans_pilka_px')
-        new_contact = bool(contact_edge_front) or contact_tracker.take_latched_edge()
+        # Liczymy WYŁĄCZNIE ze zlatchowanych zboczy (każdy kontakt = +1 w liczniku),
+        # konsumując po jednym. `contact_edge_front` z kolejki służy już tylko do
+        # wizualnego błysku — NIE dodajemy go, bo to powodowało podwójne liczenie.
+        new_contact = contact_tracker.take_latched_edge()
 
         bounce_info = _register_bounce_on_contact(
             contact_tracker,
@@ -980,6 +986,7 @@ def stream_dual_camera_frames(current_source):
             ostatnie_odbicie=None if is_timed_session_active() else last_bounce,
             tryb_setup=in_setup,
             punkty=bp_front or None,
+            camera_mode="dual",
         )
 
         # Wybierz bazowe metryki (z kamery frontowej — tam jest piłka)
@@ -1044,6 +1051,7 @@ def stream_dual_camera_frames(current_source):
             has_pose=bool(metrics.get('hasPose')),
             has_legs=bool(has_legs),
             posture_warnings=posture_live,
+            camera_mode="dual",
         )
         metrics.update(session_metrics_overlay())
 

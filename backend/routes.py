@@ -47,8 +47,8 @@ def stop_analysis():
 
 
 @router.post("/api/session/start")
-def start_training_session():
-    start_session()
+def start_training_session(duration: int = 30):
+    start_session(duration_sec=duration)
     update_metrics(
         sessionStatus="setup",
         sessionSecondsRemaining=0,

@@ -6,9 +6,11 @@ import threading
 import time
 
 PREP_DURATION_SEC = 3.0
-ACTIVE_DURATION_SEC = 10.0
+ACTIVE_DURATION_SEC = 30.0          # domyślny czas próby (sekundy)
+ACTIVE_DURATION_MIN_SEC = 5.0       # dolna granica wyboru czasu
+ACTIVE_DURATION_MAX_SEC = 180.0     # górna granica wyboru czasu
 SUMMARY_DURATION_SEC = 8.0
-READY_STABLE_SEC = 1.5
+READY_STABLE_SEC = 0.8  # krócej — łatwiej „wstrzelić się" w pozycję startową
 
 _lock = threading.Lock()
 _setup_ready_since: float | None = None
@@ -17,12 +19,19 @@ _session: dict = {
     "prep_end_at": 0.0,
     "active_end_at": 0.0,
     "summary_end_at": 0.0,
+    "active_duration": ACTIVE_DURATION_SEC,
     "bounces": [],
     "aggregate": None,
 }
 
 
-def start_session() -> None:
+def _clamp_duration(duration_sec: float | int | None) -> float:
+    if duration_sec is None:
+        return ACTIVE_DURATION_SEC
+    return float(max(ACTIVE_DURATION_MIN_SEC, min(ACTIVE_DURATION_MAX_SEC, duration_sec)))
+
+
+def start_session(duration_sec: float | int | None = None) -> None:
     global _setup_ready_since
     with _lock:
         _setup_ready_since = None
@@ -32,6 +41,7 @@ def start_session() -> None:
                 "prep_end_at": 0.0,
                 "active_end_at": 0.0,
                 "summary_end_at": 0.0,
+                "active_duration": _clamp_duration(duration_sec),
                 "bounces": [],
                 "aggregate": None,
             }
@@ -64,36 +74,28 @@ def is_timed_session_active() -> bool:
         return _session["status"] in ("setup", "prep", "active", "summary")
 
 
-def _is_posture_ready(posture_warnings: str | None) -> bool:
-    if not posture_warnings:
-        return True
-    lowered = posture_warnings.lower()
-    if "lokie" in lowered or "łokci" in lowered:
-        return False
-    return True
-
-
 def try_advance_from_setup(
     gotowosc: dict | None,
     *,
     has_pose: bool,
     has_legs: bool,
     posture_warnings: str | None = None,
+    camera_mode: str = "front",
 ) -> bool:
-    """Przechodzi z setup → prep gdy wszystkie segmenty są OK przez READY_STABLE_SEC."""
+    """
+    Przechodzi z setup → prep gdy WSZYSTKIE 5 segmentów jest na zielono.
+
+    Segmenty są te same we wszystkich trybach, ale przy pojedynczej kamerze
+    liczone w uproszczony, łatwy sposób (patrz _gotowosc_setup_prosta),
+    więc da się je wszystkie zaświecić.
+    """
     global _setup_ready_since
 
     with _lock:
         if _session["status"] != "setup":
             return False
 
-    ready = (
-        has_pose
-        and has_legs
-        and bool(gotowosc)
-        and all(gotowosc.values())
-        and _is_posture_ready(posture_warnings)
-    )
+    ready = has_pose and bool(gotowosc) and all(gotowosc.values())
 
     if not ready:
         _setup_ready_since = None
@@ -110,9 +112,10 @@ def try_advance_from_setup(
     with _lock:
         if _session["status"] != "setup":
             return False
+        active_duration = _session.get("active_duration") or ACTIVE_DURATION_SEC
         _session["status"] = "prep"
         _session["prep_end_at"] = now + PREP_DURATION_SEC
-        _session["active_end_at"] = now + PREP_DURATION_SEC + ACTIVE_DURATION_SEC
+        _session["active_end_at"] = now + PREP_DURATION_SEC + active_duration
 
     _setup_ready_since = None
     return True

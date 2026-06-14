@@ -150,7 +150,16 @@ def _detect_ball_yolo(frame, body_points=None):
 
 
 def _ball_search_zone(body_points, h, w):
-    """Okrąg wokół platformy dłoni — poza nim ignorujemy detekcje (lampy, meble)."""
+    """
+    Strefa poszukiwania piłki wokół platformy dłoni.
+
+    W odbijaniu piłka leci wysoko w górę między kontaktami, więc strefa jest
+    ELIPSĄ wyraźnie wydłużoną ku górze (nad dłonie), a nie ciasnym okręgiem.
+    Dzięki temu piłkę śledzimy przez cały łuk lotu, a nie tracimy jej w szczycie.
+
+    Zwraca: (cx, cy, rx, ry) — środek elipsy + półosie pozioma/pionowa.
+    Poza strefą ignorujemy detekcje (lampy, meble w tle).
+    """
     try:
         lw = body_points["lewy_nadgarstek"]
         rw = body_points["prawy_nadgarstek"]
@@ -159,18 +168,26 @@ def _ball_search_zone(body_points, h, w):
     except KeyError:
         return None
 
-    cx = int((lw.x + rw.x) / 2 * w)
-    cy = int((lw.y + rw.y) / 2 * h)
+    wrist_cx = int((lw.x + rw.x) / 2 * w)
+    wrist_cy = int((lw.y + rw.y) / 2 * h)
     shoulder_w = max(0.12 * w, abs(ls.x - rs.x) * w)
-    radius = max(85, int(shoulder_w * 1.05))
-    return cx, cy, radius
+
+    # Strefa umiarkowana: obejmuje dłonie i trochę nad nimi, ale NIE całe tło nad głową
+    # (zbyt duża strefa łapała lampy/meble). Liczenie odbić i tak dzieje się w DNIE łuku
+    # przy dłoniach, więc nie potrzebujemy sięgać aż do szczytu lotu piłki.
+    rx = max(105, int(shoulder_w * 1.35))   # szerokość — dłonie + margines
+    ry = max(155, int(shoulder_w * 2.3))    # wysokość — nad dłonie (łuk piłki)
+    cy = int(wrist_cy - ry * 0.32)
+    return wrist_cx, cy, rx, ry
 
 
 def _in_ball_search_zone(cx, cy, zone, h, w):
     if zone is None:
         return False
-    zcx, zcy, radius = zone
-    return ((cx - zcx) ** 2 + (cy - zcy) ** 2) ** 0.5 <= radius
+    zcx, zcy, rx, ry = zone
+    nx = (cx - zcx) / max(1, rx)
+    ny = (cy - zcy) / max(1, ry)
+    return (nx * nx + ny * ny) <= 1.0
 
 
 def _detect_ball_color(frame, body_points=None):
@@ -186,20 +203,21 @@ def _detect_ball_color(frame, body_points=None):
     if zone is None:
         return []
 
-    zcx, zcy, radius = zone
-    roi_pad = int(radius * 1.35)
-    x1 = max(0, zcx - roi_pad)
-    y1 = max(0, zcy - roi_pad)
-    x2 = min(w, zcx + roi_pad)
-    y2 = min(h, zcy + roi_pad)
+    zcx, zcy, rx, ry = zone
+    pad_x = int(rx * 1.2)
+    pad_y = int(ry * 1.1)
+    x1 = max(0, zcx - pad_x)
+    y1 = max(0, zcy - pad_y)
+    x2 = min(w, zcx + pad_x)
+    y2 = min(h, zcy + pad_y)
     roi = frame[y1:y2, x1:x2]
     if roi.size == 0:
         return []
 
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     masks = [
-        cv2.inRange(hsv, (16, 70, 70), (36, 255, 255)),
-        cv2.inRange(hsv, (95, 45, 45), (130, 255, 255)),
+        cv2.inRange(hsv, (17, 70, 70), (35, 255, 255)),    # żółty
+        cv2.inRange(hsv, (95, 55, 55), (130, 255, 255)),   # niebieski
     ]
     mask = masks[0]
     for channel_mask in masks[1:]:
@@ -211,8 +229,8 @@ def _detect_ball_color(frame, body_points=None):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []
     roi_area = (x2 - x1) * (y2 - y1)
-    min_area = max(30, int(roi_area * 0.0008))
-    max_area = int(roi_area * 0.08)
+    min_area = max(28, int(roi_area * 0.0006))
+    max_area = int(roi_area * 0.10)
 
     for contour in contours:
         area = cv2.contourArea(contour)
@@ -222,7 +240,7 @@ def _detect_ball_color(frame, body_points=None):
         if perimeter <= 0:
             continue
         circularity = 4 * np.pi * area / (perimeter * perimeter)
-        if circularity < 0.25:
+        if circularity < 0.32:  # dość okrągły — odrzuca tło, ale nie gubi piłki w ruchu
             continue
         moments = cv2.moments(contour)
         if moments["m00"] == 0:
@@ -245,6 +263,9 @@ def _pick_best_ball_candidate(candidates, frame, body_points=None, conf_key=2, z
     if zone is None:
         return []
 
+    # Dopuszczalna odległość od nadgarstka = wysokość strefy (piłka leci wysoko w górę).
+    max_dist = max(80, int(max(zone[2], zone[3]) * 1.05))
+
     scored = []
     for item in candidates:
         cx, cy = item[0], item[1]
@@ -254,29 +275,15 @@ def _pick_best_ball_candidate(candidates, frame, body_points=None, conf_key=2, z
         dist = _nearest_wrist_distance_px((cx, cy), body_points, (h, w))
         if dist is None:
             continue
-        max_dist = max(60, zone[2] * 0.95)
         if dist > max_dist:
             continue
         proximity = 1.0 - min(1.0, dist / max_dist)
-        score = score_val * 0.3 + proximity * 0.7
+        score = score_val * 0.2 + proximity * 0.8
         scored.append((score, item))
 
+    # Brak kandydata blisko dłoni → NIE zgadujemy (to właśnie powodowało
+    # „wyrywanie" przypadkowych obiektów z tła i miganie ramki).
     if not scored:
-        nearest = None
-        for item in candidates:
-            cx, cy = item[0], item[1]
-            if not _in_ball_search_zone(cx, cy, zone, h, w):
-                continue
-            dist = _nearest_wrist_distance_px((cx, cy), body_points, (h, w))
-            if dist is None:
-                continue
-            if nearest is None or dist < nearest[0]:
-                nearest = (dist, item)
-        if nearest:
-            item = nearest[1]
-            cx, cy = item[0], item[1]
-            _draw_ball_bbox(frame, cx, cy, item[3], item[4], item[5], item[6], item[7])
-            return [(cx, cy)]
         return []
 
     scored.sort(key=lambda entry: entry[0], reverse=True)
@@ -462,7 +469,9 @@ def is_ball_close_to_forearms(frame, body_points, ball_positions):
 class BallContactTracker:
     def __init__(self, cooldown_frames=14):
         self.cooldown_frames = cooldown_frames
-        self.cooldown_sec = max(0.10, cooldown_frames / 25.0)
+        # Cooldown dłuższy niż połowa cyklu odbicia → jedno fizyczne odbicie nie
+        # jest liczone dwa razy (przez próg odległości ORAZ dno trajektorii).
+        self.cooldown_sec = max(0.35, cooldown_frames / 25.0)
         self.contact_count = 0
         self.last_contact_at = 0.0
         self.was_in_contact = False
@@ -472,6 +481,11 @@ class BallContactTracker:
         self._latched_edges = 0
         self._edge_lock = threading.Lock()
         self._state_lock = threading.Lock()
+        # ── Śledzenie trajektorii pionowej piłki (detekcja dna odbicia) ──
+        self._last_y = None
+        self._going_down = False
+        self._descent_start_y = None
+        self._min_dist_in_phase = float("inf")
 
     def latch_contact_edge(self):
         """Dual-Cam: zachowaj zbocze kontaktu mimo gubienia klatek w kolejce."""
@@ -480,11 +494,19 @@ class BallContactTracker:
                 self._latched_edges += 1
 
     def take_latched_edge(self) -> bool:
+        """
+        Zwraca True dokładnie raz na każde zarejestrowane zbocze kontaktu.
+
+        Latch jest jedynym źródłem prawdy dla Dual-Cam — każdy kontakt zwiększa
+        licznik o 1 (niezależnie od gubienia klatek w kolejce), a tu konsumujemy
+        po jednym. BEZ fallbacku na new_contact_this_frame, bo ta flaga pozostaje
+        True do następnej klatki i powodowała podwójne liczenie.
+        """
         with self._edge_lock:
             if self._latched_edges > 0:
                 self._latched_edges -= 1
                 return True
-            return bool(self.new_contact_this_frame)
+            return False
 
     def _contact_threshold(self, frame):
         return max(110, min(frame.shape[:2]) * 0.38)
@@ -511,6 +533,53 @@ class BallContactTracker:
             self.was_in_contact = is_near
             return is_near
 
+    def _note_trajectory(self, ball_center, distance_px, threshold):
+        """
+        Liczy odbicie w DNIE łuku piłki: gdy piłka przestaje opadać i zaczyna
+        lecieć w górę, a w najniższym punkcie była blisko platformy dłoni.
+
+        To znacznie pewniejsze niż sam próg odległości — wychwytuje sam moment
+        uderzenia, nawet gdy piłka tylko na chwilę zbliży się do rąk.
+        Wywoływane już pod self._state_lock.
+        """
+        move_eps = 2.0  # px — ignoruj drgania detekcji
+        min_drop = max(18.0, threshold * 0.25)  # min. spadek przed dnem
+        y = float(ball_center[1])
+
+        if self._last_y is None:
+            self._last_y = y
+            self._descent_start_y = y
+            self._min_dist_in_phase = distance_px
+            return
+
+        self._min_dist_in_phase = min(self._min_dist_in_phase, distance_px)
+        dy = y - self._last_y  # dodatnie = piłka opada (y rośnie w dół)
+
+        if dy > move_eps:
+            if not self._going_down:
+                self._going_down = True
+                self._descent_start_y = self._last_y
+                self._min_dist_in_phase = distance_px
+        elif dy < -move_eps:
+            if self._going_down:
+                # Zwrot z opadania na wznoszenie → dno łuku w poprzedniej klatce.
+                descent = self._last_y - (self._descent_start_y or self._last_y)
+                near_bottom = self._min_dist_in_phase <= threshold
+                enough_cooldown = time.time() - self.last_contact_at >= self.cooldown_sec
+                if descent >= min_drop and near_bottom and enough_cooldown:
+                    self._register_contact()
+                self._going_down = False
+                self._descent_start_y = self._last_y
+                self._min_dist_in_phase = distance_px
+
+        self._last_y = y
+
+    def _reset_trajectory(self):
+        self._last_y = None
+        self._going_down = False
+        self._descent_start_y = None
+        self._min_dist_in_phase = float("inf")
+
     def note_bio_distance(self, distance_px, threshold_px=240):
         """Zapas: dystans piłka↔nadgarstek z analizuj_front."""
         self._try_register_edge(distance_px, threshold_px)
@@ -531,8 +600,12 @@ class BallContactTracker:
             if ball_center is None or distance is None:
                 self.was_in_contact = False
                 self.last_ball_center = None
+                self._reset_trajectory()
                 return self.contact_hold_remaining > 0
 
+            # Dwa niezależne sygnały odbicia (dno trajektorii + próg odległości),
+            # zdeduplikowane wspólnym cooldownem w _register_contact.
+            self._note_trajectory(ball_center, distance, threshold)
             is_near = self._try_register_edge_unlocked(distance, threshold)
             self.last_ball_center = ball_center
             draw_forearm_contact(frame, body_points, ball_center, is_near)
