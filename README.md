@@ -32,6 +32,11 @@ Szczegóły merytoryczne i ustalenia z konsultacji trenera: **[KONSULTACJA_TRENE
 
 Instrukcja uruchomienia krok po kroku: **[URUCHOMIENIE_I_SZKOLENIE.md](./URUCHOMIENIE_I_SZKOLENIE.md)**.
 
+Dokumentacja adaptacji na przedmiot **Podstawy Inżynierii Oprogramowania**:
+**[wymagania](./docs/pio/wymagania.md)**,
+**[backlog i sprinty](./docs/pio/backlog.md)**,
+**[diagramy UML](./docs/pio/uml.md)**.
+
 ---
 
 ## Stos technologiczny
